@@ -86,12 +86,35 @@ class BoneReconstructor:
 
         fracture_ratio = self._fracture_ratio(fracture)
         z_split = mesh.bounds[0][2] + (1.0 - fracture_ratio) * (mesh.bounds[1][2] - mesh.bounds[0][2])
+        angle_deg = float(fracture.get("angle_deg") or 0.0)
 
-        pieces = self._split(mesh, z_split) if fracture.get("detected") else [mesh]
+        pieces = self._split(mesh, z_split, angle_deg=angle_deg) if fracture.get("detected") else [mesh]
         if len(pieces) == 2:
             meshes = {"femur_proximal": pieces[0], "femur_distal": pieces[1]}
+
+            # Generate anatomically displaced and angulated pose for the pre-reduction view
+            disp_x = float(fracture.get("displacement_mm") or 6.5)
+            ang_deg = float(fracture.get("angulation_deg") or 3.5)
+            short_z = float(fracture.get("shortening_mm") or 2.0)
+
+            distal_displaced = pieces[1].copy()
+            try:
+                rot_mat = trimesh.transformations.rotation_matrix(
+                    np.radians(ang_deg), [0.0, 1.0, 0.0], point=[0.0, 0.0, float(z_split)]
+                )
+                distal_displaced.apply_transform(rot_mat)
+            except Exception:
+                pass
+            distal_displaced.apply_translation([disp_x, 1.5, -short_z])
+
+            preview_meshes = {
+                "femur_proximal": pieces[0],
+                "femur_distal": distal_displaced,
+            }
         else:
             meshes = {"femur": mesh}
+            preview_meshes = {"femur": mesh}
+            disp_x, ang_deg, short_z = 0.0, 0.0, 0.0
 
         frame = {
             "mode": "estimated_xray",
@@ -101,8 +124,14 @@ class BoneReconstructor:
             "shaft_diameter_mm": round(shaft_mm, 1),
             "fracture_z": round(float(z_split), 2) if len(pieces) == 2 else None,
             "fracture_ratio": round(float(fracture_ratio), 4),
+            "fracture_dynamics": {
+                "angle_deg": round(angle_deg, 1),
+                "displacement_mm": [round(disp_x, 1), 1.5, round(-short_z, 1)],
+                "angulation_deg": round(ang_deg, 1),
+                "z_split": round(float(z_split), 2) if len(pieces) == 2 else None,
+            },
         }
-        return {"meshes": meshes, "frame": frame}
+        return {"meshes": meshes, "preview_meshes": preview_meshes, "frame": frame}
 
     def _parametric_femur(self, resolution: float = 2.0) -> trimesh.Trimesh:
         xs = np.arange(-62.0, 84.0, resolution)
@@ -215,24 +244,65 @@ class BoneReconstructor:
             return 0.5
 
     @staticmethod
-    def _split(mesh: trimesh.Trimesh, z_split: float) -> List[trimesh.Trimesh]:
-        normal = np.array([0.0, 0.0, 1.0])
-        origin = np.array([0.0, 0.0, float(z_split)])
+    def _perturb_fracture_face(
+        mesh: trimesh.Trimesh,
+        normal: np.ndarray,
+        origin: np.ndarray,
+        amplitude: float = 3.2,
+    ) -> trimesh.Trimesh:
+        if mesh is None or mesh.is_empty:
+            return mesh
+        try:
+            verts = mesh.vertices.copy()
+            diffs = verts - origin
+            dists = np.abs(np.dot(diffs, normal))
+            near_mask = dists < 3.0
+            if not np.any(near_mask):
+                return mesh
+            coords = verts[near_mask]
+            x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
+            noise = (
+                np.sin(0.35 * x + 1.2) * np.cos(0.35 * y + 0.5) * 0.55
+                + np.sin(0.75 * y - 0.7) * np.cos(0.75 * z + 1.1) * 0.35
+                + np.sin(1.4 * x + 1.4 * y) * 0.15
+            )
+            weight = np.clip(1.0 - (dists[near_mask] / 3.0), 0.0, 1.0)
+            displacement = normal * (noise * amplitude * weight)[:, np.newaxis]
+            verts[near_mask] += displacement
+            mesh.vertices = verts
+        except Exception:
+            pass
+        return mesh
+
+    def _split(
+        self,
+        mesh: trimesh.Trimesh,
+        z_split: float,
+        angle_deg: float = 0.0,
+    ) -> List[trimesh.Trimesh]:
+        theta = np.radians(float(angle_deg))
+        normal = np.array([-np.sin(theta), 0.0, np.cos(theta)], dtype=float)
+        norm_val = np.linalg.norm(normal)
+        normal = normal / (norm_val if norm_val > 1e-6 else 1.0)
+        origin = np.array([0.0, 0.0, float(z_split)], dtype=float)
         try:
             upper = trimesh.intersections.slice_mesh_plane(mesh, normal, origin, cap=True)
             lower = trimesh.intersections.slice_mesh_plane(mesh, -normal, origin, cap=True)
-            if upper.is_empty or lower.is_empty:
-                return [mesh]
-            return [upper, lower]
+            if not upper.is_empty and not lower.is_empty:
+                upper = self._perturb_fracture_face(upper, normal, origin, amplitude=3.2)
+                lower = self._perturb_fracture_face(lower, -normal, origin, amplitude=3.2)
+                return [upper, lower]
         except Exception:
-            # Fall back to a vertex split if the plane cut fails.
-            centers = mesh.triangles_center[:, 2]
-            upper = mesh.submesh([np.where(centers >= z_split)[0]], append=True)
-            lower = mesh.submesh([np.where(centers < z_split)[0]], append=True)
-            if upper.is_empty or lower.is_empty:
-                return [mesh]
-            if isinstance(upper, list):
-                upper = trimesh.util.concatenate(upper)
-            if isinstance(lower, list):
-                lower = trimesh.util.concatenate(lower)
-            return [upper, lower]
+            pass
+
+        # Fall back to angled vertex split
+        dists = np.dot(mesh.triangles_center - origin, normal)
+        upper = mesh.submesh([np.where(dists >= 0.0)[0]], append=True)
+        lower = mesh.submesh([np.where(dists < 0.0)[0]], append=True)
+        if upper.is_empty or lower.is_empty:
+            return [mesh]
+        if isinstance(upper, list):
+            upper = trimesh.util.concatenate(upper)
+        if isinstance(lower, list):
+            lower = trimesh.util.concatenate(lower)
+        return [upper, lower]

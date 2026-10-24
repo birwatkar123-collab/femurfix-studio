@@ -232,10 +232,11 @@ def analyze_case(case_id: str, payload: Optional[AnalyzeRequest] = None) -> Dict
             analysis_payload["imaging"] = imaging_meta
 
         bone_meshes = reconstruction["meshes"]
+        preview_meshes = reconstruction.get("preview_meshes", bone_meshes)
         frame = reconstruction["frame"]
 
         preview_name = f"preview_{case_id}.glb"
-        exporter.export_scene(bone_meshes, filename=preview_name, root_name=f"case_{case_id}")
+        exporter.export_scene(preview_meshes, filename=preview_name, root_name=f"case_{case_id}")
 
         structures = _save_meshes(directory, bone_meshes)
         recommendations = recommender.recommend(

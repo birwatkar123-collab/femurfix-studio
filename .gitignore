@@ -58,6 +58,7 @@ backend/outputs/assembly_*.glb
 backend/outputs/preview_*.glb
 
 # OS & Editor artifacts
+*.mp4
 .DS_Store
 Thumbs.db
 .idea/
