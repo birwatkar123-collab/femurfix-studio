@@ -1,0 +1,9 @@
+gradio
+pillow
+numpy
+scikit-image
+scipy
+trimesh
+fastapi
+uvicorn
+# Add torch/transformers + ultralytics when training real weights

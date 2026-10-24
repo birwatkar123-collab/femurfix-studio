@@ -1,0 +1,12 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+python-multipart>=0.0.9
+pydicom>=3.0
+SimpleITK>=2.4
+numpy>=1.26
+scipy>=1.11
+scikit-image>=0.24
+Pillow>=10.0
+trimesh>=4.4
+gradio_client>=1.3
