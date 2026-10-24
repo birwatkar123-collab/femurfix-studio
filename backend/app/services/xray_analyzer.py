@@ -119,7 +119,10 @@ class XRayAnalyzer:
                 except Exception:
                     mask = None
             if mask is not None and mask.any():
-                return morphology.remove_small_objects(mask.astype(bool), min_size=200)
+                try:
+                    return morphology.remove_small_objects(mask.astype(bool), max_size=200)
+                except TypeError:
+                    return morphology.remove_small_objects(mask.astype(bool), min_size=200)
 
         img = image.astype(np.float32)
         # Radiographs may be stored inverted (bright background).
@@ -136,7 +139,11 @@ class XRayAnalyzer:
         binary = blurred > max(threshold, float(np.percentile(blurred, 70)))
         binary = ndimage.binary_closing(binary, iterations=2)
         binary = ndimage.binary_fill_holes(binary)
-        binary = morphology.remove_small_objects(binary, min_size=max(200, binary.size // 500))
+        min_sz = max(200, binary.size // 500)
+        try:
+            binary = morphology.remove_small_objects(binary, max_size=min_sz)
+        except TypeError:
+            binary = morphology.remove_small_objects(binary, min_size=min_sz)
 
         labels = measure.label(binary)
         if labels.max() == 0:
@@ -146,7 +153,13 @@ class XRayAnalyzer:
         height, width = binary.shape
         for region in measure.regionprops(labels):
             area = float(region.area)
-            elongation = region.major_axis_length / max(region.minor_axis_length, 1.0)
+            try:
+                major = float(region.axis_major_length)
+                minor = float(region.axis_minor_length)
+            except AttributeError:
+                major = float(region.major_axis_length)
+                minor = float(region.minor_axis_length)
+            elongation = major / max(minor, 1.0)
             vertical_span = region.bbox[2] - region.bbox[0]
             if vertical_span < height * 0.25:
                 continue
