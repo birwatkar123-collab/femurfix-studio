@@ -1,0 +1,9 @@
+# FracAtlas binary fracture pretraining.
+# Paths are resolved relative to this YAML's directory (ml/), so training works
+# from any working directory.
+train: data/images/train
+val: data/images/val
+test: data/images/test
+
+names:
+  0: fracture

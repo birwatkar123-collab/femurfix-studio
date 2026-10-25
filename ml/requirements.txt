@@ -1,0 +1,5 @@
+ultralytics>=8.3,<9
+albumentations>=1.4.21,<2
+onnx>=1.16
+onnxslim>=0.1.31
+onnxruntime>=1.18

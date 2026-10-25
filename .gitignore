@@ -65,3 +65,16 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# ML datasets, training runs, and model weights
+ml/data/images/
+ml/data/labels/
+ml/data/raw/
+ml/runs/
+runs/
+*.pt
+*.onnx
+!backend/models/femur_fracture.onnx
+
+# Kaggle CLI staging
+.kaggle_staging/

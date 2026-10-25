@@ -10,8 +10,9 @@ APP_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 OUTPUT_DIR = BASE_DIR / "outputs"
 CASE_DIR = BASE_DIR / "cases"
+MODELS_DIR = BASE_DIR / "models"
 
-for directory in (UPLOAD_DIR, OUTPUT_DIR, CASE_DIR):
+for directory in (UPLOAD_DIR, OUTPUT_DIR, CASE_DIR, MODELS_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 DISCLAIMER = (
@@ -51,6 +52,14 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", 250 * 1024 * 1024))
 HF_SPACE_ID = os.environ.get("HF_SPACE_ID", "").strip()
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip() or None
 ALLOWED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".dcm", ".dicom"}
+
+# Local fracture detector
+LOCAL_ONNX_MODEL = Path(
+    os.environ.get("FRACTURE_ONNX_MODEL", str(MODELS_DIR / "femur_fracture.onnx"))
+).expanduser()
+USE_LOCAL_ONNX = os.environ.get("USE_LOCAL_ONNX", "1").strip().lower() not in {"0", "false", "no"}
+LOCAL_ONNX_CONF = float(os.environ.get("LOCAL_ONNX_CONF", "0.15"))
+LOCAL_ONNX_IOU = float(os.environ.get("LOCAL_ONNX_IOU", "0.45"))
 
 SUPPORTED_DEVICE_FAMILIES: List[str] = [
     "cannulated_screws",

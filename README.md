@@ -168,6 +168,8 @@ You can run automated end-to-end tests without starting the web servers:
 ```bash
 cd backend
 python tests/e2e_check.py
+python tests/onnx_detector_check.py --model models/femur_fracture.onnx
+python tests/eval_onnx_test_split.py --split test
 ```
 
 To generate a new synthetic radiograph with customizable fracture patterns:
@@ -178,9 +180,25 @@ python tests/make_synthetic_xray.py --out test_femur.png
 
 ---
 
+## 🧠 Fracture Model
+
+The backend prefers a local YOLO11n fracture detector at `backend/models/femur_fracture.onnx`
+(`onnxruntime`, CPU). It was trained on FracAtlas for 50 epochs on a Kaggle T4; held-out test
+metrics are P 0.77 / R 0.29 / mAP50 0.34 at `conf=0.25`. The app uses `conf=0.15` for higher
+recall. This is a research prototype, not a clinically validated detector; see
+[`ml/README.md`](ml/README.md) for metrics, caveats, and the region-label roadmap.
+
+Configuration: `LOCAL_ONNX_CONF`, `LOCAL_ONNX_IOU`, `FRACTURE_ONNX_MODEL`, `USE_LOCAL_ONNX=0`.
+If the model file is absent or `USE_LOCAL_ONNX=0`, the analyzer falls back to the HF Space (if
+configured) and then the built-in heuristic. Model binaries are gitignored; place the Kaggle
+`best.onnx` at `backend/models/femur_fracture.onnx` on a fresh checkout.
+
+---
+
 ## 🌐 Hugging Face ZeroGPU ML Space (Optional)
 
 FemurFix Studio includes an optional Hugging Face ZeroGPU Space located in [`ml/space/`](ml/space/).
+The local ONNX detector takes priority when installed; set `USE_LOCAL_ONNX=0` to force the Space.
 
 1. Create a new Space on [Hugging Face Spaces](https://huggingface.co/spaces) with **SDK: Gradio** and hardware **ZeroGPU (A10G/H100)**.
 2. Push the contents of `ml/space/` to your Space repository.
@@ -189,7 +207,8 @@ FemurFix Studio includes an optional Hugging Face ZeroGPU Space located in [`ml/
    export HF_SPACE_ID="your-username/femurfix-space"
    export HF_TOKEN="your_hf_token"
    ```
-4. If `HF_SPACE_ID` is not configured or offline, the backend seamlessly falls back to its deterministic image-processing heuristic analyzer.
+4. If `HF_SPACE_ID` is not configured or offline, the backend falls back to its deterministic
+   image-processing heuristic analyzer.
 
 ---
 

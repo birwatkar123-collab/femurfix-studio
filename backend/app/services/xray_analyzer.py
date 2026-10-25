@@ -1,13 +1,10 @@
 """Radiograph analysis: fracture detection + femur silhouette segmentation.
 
-Two engines:
+Engines, in priority order:
 
-* ``hf_zerogpu`` — calls the Hugging Face Space (fine-tuned detector + bone segmentation).
-* ``heuristic`` — deterministic image-processing fallback used when the Space is not
-  configured or unreachable. Its output is explicitly marked as a demo heuristic.
-
-The heuristic is NOT a trained diagnostic model. It detects cortex discontinuity and
-silhouette narrowing so the rest of the pipeline can be exercised end-to-end.
+* ``onnx_local`` — local YOLO11n ONNX checkpoint (FracAtlas binary pretraining).
+* ``hf_zerogpu`` — Hugging Face Space when no local model is available.
+* ``heuristic`` — demo-only image-processing fallback that detects cortex discontinuity.
 """
 from __future__ import annotations
 
@@ -19,6 +16,7 @@ from scipy import ndimage
 from skimage import filters, measure, morphology
 
 from ..utils.config import FRACTURE_REGIONS, HF_SPACE_ID, HF_TOKEN
+from .ml_detector import get_detector
 
 
 class AnalysisError(RuntimeError):
@@ -47,10 +45,17 @@ class XRayAnalyzer:
         if image.ndim != 2:
             raise AnalysisError("Expected a single-channel radiograph")
 
-        bone_mask: Optional[np.ndarray] = None
-        remote: Optional[Dict[str, Any]] = None
+        local_detection: Optional[Dict[str, Any]] = None
+        local = get_detector()
+        if local is not None:
+            try:
+                local_detection = local.detect(image)
+                self.last_engine = "onnx_local"
+            except Exception as exc:
+                print(f"[analyzer] local ONNX inference failed, falling back: {exc}")
 
-        if self.hf_space_id and image_path:
+        remote: Optional[Dict[str, Any]] = None
+        if local_detection is None and self.hf_space_id and image_path:
             try:
                 remote = self._call_space(image_path)
                 self.last_engine = "hf_zerogpu"
@@ -58,7 +63,7 @@ class XRayAnalyzer:
                 print(f"[analyzer] HF Space unavailable, using heuristic: {exc}")
                 remote = None
 
-        if remote is None:
+        if local_detection is None and remote is None:
             self.last_engine = "heuristic"
 
         bone_mask = self._segment_bone(image, remote.get("bone_mask") if remote else None)
@@ -68,7 +73,14 @@ class XRayAnalyzer:
         silhouette = self._silhouette(bone_mask)
         measurements = self._measurements(silhouette, meta)
 
-        if remote and remote.get("fracture"):
+        if local_detection is not None:
+            if local_detection.get("detected"):
+                fracture = self._fracture_from_detection(
+                    local_detection, bone_mask, silhouette, image.shape[0]
+                )
+            else:
+                fracture = self._no_fracture_from_detection()
+        elif remote and remote.get("fracture"):
             fracture = self._normalise_fracture(remote["fracture"], silhouette)
             fracture["notes"].append("Fracture model: Hugging Face ZeroGPU Space")
         else:
@@ -231,8 +243,65 @@ class XRayAnalyzer:
         }
 
     # --------------------------------------------------------------- fracture
+    def _fracture_from_detection(
+        self,
+        detection: Dict[str, Any],
+        mask: np.ndarray,
+        silhouette: Dict[str, Any],
+        image_height: int,
+    ) -> Dict[str, Any]:
+        box = [float(v) for v in (detection.get("bbox_norm") or [0.15, 0.4, 0.85, 0.6])]
+        box = [float(np.clip(v, 0.0, 1.0)) for v in box]
+        center_y_px = (box[1] + box[3]) / 2.0 * image_height
+        top = float(silhouette["top_y"])
+        span = max(1.0, float(silhouette["height_px"]))
+        anchor_ratio = float(np.clip((center_y_px - top) / span, 0.0, 1.0))
+
+        fracture = self._heuristic_fracture(mask, silhouette, anchor_ratio=anchor_ratio)
+        region = self._region_from_ratio(anchor_ratio)
+        confidence = float(detection.get("confidence") or 0.0)
+        fracture.update(
+            {
+                "detected": True,
+                "region": region,
+                "ao_family": FRACTURE_REGIONS.get(region),
+                "pattern": f"Model-detected {fracture['pattern']}",
+                "confidence": round(float(np.clip(confidence, 0.0, 0.99)), 3),
+                "bbox_norm": box,
+            }
+        )
+        fracture["notes"] = [
+            f"Fracture detected by local ONNX YOLO11n ({confidence:.0%} confidence).",
+            "Fracture-plane geometry is estimated from the radiograph silhouette.",
+            "Region is assigned geometrically; FracAtlas has no hip-region labels.",
+        ]
+        return fracture
+
+    @staticmethod
+    def _no_fracture_from_detection() -> Dict[str, Any]:
+        region = "shaft"
+        return {
+            "detected": False,
+            "region": region,
+            "ao_family": FRACTURE_REGIONS.get(region),
+            "pattern": "No fracture detected by the local ONNX model",
+            "confidence": 0.0,
+            "bbox_norm": [0.15, 0.4, 0.85, 0.6],
+            "angle_deg": 0.0,
+            "displacement_mm": 0.0,
+            "angulation_deg": 0.0,
+            "shortening_mm": 0.0,
+            "notes": [
+                "Fracture model: local ONNX YOLO11n (FracAtlas binary pretraining).",
+                "A negative prediction is not evidence of an intact femur.",
+            ],
+        }
+
     def _heuristic_fracture(
-        self, mask: np.ndarray, silhouette: Dict[str, Any]
+        self,
+        mask: np.ndarray,
+        silhouette: Dict[str, Any],
+        anchor_ratio: Optional[float] = None,
     ) -> Dict[str, Any]:
         top = silhouette["top_y"]
         bottom = silhouette["bottom_y"]
@@ -254,7 +323,7 @@ class XRayAnalyzer:
         min_width = float(np.min(shaft)) if shaft.size else 1.0
         narrowing = 1.0 - min_width / max(median_width, 1.0)
 
-        detected = peak_gradient > 0.22 or narrowing > 0.18
+        detected = peak_gradient > 0.22 or narrowing > 0.18 or anchor_ratio is not None
         confidence = 0.35
         notes: List[str] = []
         if detected:
@@ -267,7 +336,10 @@ class XRayAnalyzer:
             notes.append("No clear cortical discontinuity detected by the heuristic.")
             notes.append("Absence of a detection is not evidence of an intact femur.")
 
-        anchor = (lo + peak_index) if shaft.size else int(height * 0.5)
+        if anchor_ratio is not None:
+            anchor = int(np.clip(anchor_ratio, 0.0, 1.0) * height)
+        else:
+            anchor = (lo + peak_index) if shaft.size else int(height * 0.5)
         ratio = float(np.clip(anchor / height, 0.0, 1.0))
         region = self._region_from_ratio(ratio)
 
