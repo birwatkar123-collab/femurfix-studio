@@ -239,11 +239,24 @@ def analyze_case(case_id: str, payload: Optional[AnalyzeRequest] = None) -> Dict
         exporter.export_scene(preview_meshes, filename=preview_name, root_name=f"case_{case_id}")
 
         structures = _save_meshes(directory, bone_meshes)
-        recommendations = recommender.recommend(
-            fracture,
-            analysis_payload.get("measurements", {}),
-            patient={"age": payload.patient_age} if payload.patient_age is not None else {},
-        )
+        fracture_detected = bool(fracture.get("detected"))
+        if fracture_detected or kind == "volume":
+            recommendations = recommender.recommend(
+                fracture,
+                analysis_payload.get("measurements", {}),
+                patient={"age": payload.patient_age} if payload.patient_age is not None else {},
+            )
+        else:
+            recommendations = {
+                "ao_family": fracture.get("ao_family"),
+                "fracture_region": fracture.get("region"),
+                "options": [],
+                "withheld": True,
+                "note": (
+                    "Fixation recommendations are withheld because the local model did not detect a "
+                    "fracture. A negative prediction is not evidence of an intact femur."
+                ),
+            }
 
         state.update(
             {
@@ -300,6 +313,12 @@ def assemble_case(case_id: str, request: AssembleRequest) -> Dict[str, Any]:
     state = _read_state(case_id)
     if not state.get("analysis"):
         raise HTTPException(status_code=409, detail="Analyse the case before assembling an implant")
+    fracture = (state.get("analysis") or {}).get("fracture") or {}
+    if state.get("kind") != "volume" and not fracture.get("detected", False):
+        raise HTTPException(
+            status_code=409,
+            detail="No fracture detected; fixation assembly is unavailable for this case.",
+        )
 
     bone_meshes = _load_meshes(directory)
     if not bone_meshes:

@@ -21,6 +21,7 @@ export default function SimView({ caseData, onReset }) {
 
   const activeGlbUrl = assembly?.glb_url || caseData.preview_glb_url
   const fractureInfo = caseData.analysis?.fracture || {}
+  const fractureDetected = fractureInfo.detected !== false
   const dispMm = fractureInfo.displacement_mm ?? 6.0
   const angleDeg = fractureInfo.angle_deg ?? 18.0
   const angulationDeg = fractureInfo.angulation_deg ?? 3.5
@@ -207,7 +208,10 @@ export default function SimView({ caseData, onReset }) {
         <div>
           <p className="text-xs uppercase tracking-[0.3em] font-medium text-cyan-400">FemurFix Studio</p>
           <p className="text-sm text-slate-300">
-            Case <span className="font-mono text-cyan-300">{caseData.case_id}</span> · {fractureInfo.region || 'shaft'} fracture · AO/OTA {fractureInfo.ao_family || '32'}
+            Case <span className="font-mono text-cyan-300">{caseData.case_id}</span>
+            {fractureDetected
+              ? <> · {fractureInfo.region || 'shaft'} fracture · AO/OTA {fractureInfo.ao_family || '32'}</>
+              : <> · no fracture detected</>}
           </p>
         </div>
         <button onClick={onReset} className="px-4 py-1.5 rounded-lg border border-slate-700 text-sm hover:bg-slate-800 transition">
@@ -224,36 +228,52 @@ export default function SimView({ caseData, onReset }) {
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 space-y-2.5 text-sm shadow-sm">
               <div className="flex justify-between pb-1 border-b border-slate-800/80">
                 <span className="text-slate-400">Region & Classification</span>
-                <span className="font-medium text-cyan-300 capitalize">{fractureInfo.region} (AO/OTA {fractureInfo.ao_family})</span>
+                <span className="font-medium text-cyan-300 capitalize">
+                  {fractureDetected ? `${fractureInfo.region} (AO/OTA ${fractureInfo.ao_family})` : 'Not determined by model'}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span className="text-slate-400">Pattern</span>
-                <span className="text-slate-200 text-right text-xs max-w-[210px]">{fractureInfo.pattern || 'Fracture detected'}</span>
+                <span className="text-slate-200 text-right text-xs max-w-[210px]">
+                  {fractureInfo.pattern || (fractureDetected ? 'Fracture detected' : 'No fracture detected')}
+                </span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Fracture Plane Inclination</span>
-                <span className="font-mono text-amber-300">{Math.abs(angleDeg).toFixed(1)}° {angleDeg >= 0 ? '(Oblique)' : '(Reverse)'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Fragment Displacement</span>
-                <span className="font-mono text-amber-300">{Math.abs(dispMm).toFixed(1)} mm</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-slate-400">Angular Deformity</span>
-                <span className="font-mono text-amber-300">{Math.abs(angulationDeg).toFixed(1)}°</span>
-              </div>
+              {fractureDetected && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Fracture Plane Inclination</span>
+                    <span className="font-mono text-amber-300">{Math.abs(angleDeg).toFixed(1)}° {angleDeg >= 0 ? '(Oblique)' : '(Reverse)'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Fragment Displacement</span>
+                    <span className="font-mono text-amber-300">{Math.abs(dispMm).toFixed(1)} mm</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400">Angular Deformity</span>
+                    <span className="font-mono text-amber-300">{Math.abs(angulationDeg).toFixed(1)}°</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between pt-1 border-t border-slate-800/80 text-xs">
                 <span className="text-slate-500">Detector Confidence</span>
-                <span className="text-emerald-400 font-medium">{((fractureInfo.confidence || 0.45) * 100).toFixed(0)}%</span>
+                <span className={`font-medium ${fractureDetected ? 'text-emerald-400' : 'text-slate-500'}`}>
+                  {fractureDetected ? `${((fractureInfo.confidence ?? 0) * 100).toFixed(0)}%` : '—'}
+                </span>
               </div>
             </div>
+            {!fractureDetected && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
+                <strong>No fracture detected.</strong> This is not evidence of an intact femur. Review the radiograph or try a different image.
+              </div>
+            )}
           </section>
 
           {/* Implant Recommendations */}
           <section className="space-y-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Recommended Fixation Constructs</h2>
-            <div className="space-y-2">
-              {options.map((opt) => (
+            {fractureDetected ? (
+              <div className="space-y-2">
+                {options.map((opt) => (
                 <button
                   key={opt.id}
                   onClick={() => setSelectedImplant(opt.id)}
@@ -273,11 +293,17 @@ export default function SimView({ caseData, onReset }) {
                     {audience === 'surgeon' ? opt.surgeon_text : opt.patient_text}
                   </p>
                 </button>
-              ))}
-            </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-3 text-xs leading-relaxed text-slate-400">
+                Fixation recommendations are withheld because no fracture was detected.
+              </div>
+            )}
           </section>
 
           {/* Assembly Generation */}
+          {fractureDetected && options.length > 0 && (
           <section className="space-y-2">
             <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Surgical Simulation</h2>
             <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3.5">
@@ -310,6 +336,7 @@ export default function SimView({ caseData, onReset }) {
               {error && <p className="text-xs text-rose-400">{error}</p>}
             </div>
           </section>
+          )}
 
           {/* Assembly Narrative & Details */}
           {assembly && (
