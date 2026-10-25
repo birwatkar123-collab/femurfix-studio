@@ -35,6 +35,31 @@ export default function App() {
     }
   }
 
+  const onReAnalyze = async (regionHint) => {
+    if (!caseData?.case_id) return
+    try {
+      const res = await fetch(`/api/cases/${caseData.case_id}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ region_hint: regionHint })
+      })
+      let data = null
+      try {
+        data = await res.json()
+      } catch {}
+      if (!res.ok) throw new Error(data?.detail || `Re-analysis failed (${res.status}).`)
+      setCaseData({
+        case_id: caseData.case_id,
+        kind: caseData.kind,
+        analysis: data.analysis,
+        preview_glb_url: data.preview_glb_url,
+        recommendations: data.recommendations
+      })
+    } catch (err) {
+      alert(err.message)
+    }
+  }
+
   const onReset = () => {
     setStage('upload')
     setCaseData(null)
@@ -42,6 +67,6 @@ export default function App() {
 
   if (!accepted) return <DisclaimerGate onAccept={() => setAccepted(true)} />
   if (stage === 'upload') return <UploadStep onCaseCreated={onCaseCreated} />
-  if (stage === 'simulate' && caseData) return <SimView caseData={caseData} onReset={onReset} />
+  if (stage === 'simulate' && caseData) return <SimView caseData={caseData} onReset={onReset} onReAnalyze={onReAnalyze} />
   return <UploadStep onCaseCreated={onCaseCreated} />
 }
