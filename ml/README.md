@@ -6,6 +6,11 @@ detector. It is a research prototype: held-out recall is low, and the region lab
 geometric rather than learned. FracAtlas is converted with the official splits, 61 truncated JPEGs
 were repaired, and a 1-epoch CPU smoke test also completed.
 
+A **v2 run (YOLO11s @960, 80 epochs)** is in flight on Kaggle; the notebook is
+`ml/notebooks/fracatlas_yolo11s_960_gpu.ipynb`, kernel
+`birwatkar/femurfix-fracatlas-yolo11s-960`. Integration criteria and run state are tracked in
+[`PROGRESS.md`](../PROGRESS.md).
+
 ## Trained baseline (Kaggle)
 
 | Split | Precision | Recall | mAP50 | mAP50-95 |
@@ -98,8 +103,8 @@ The femoral-neck-vs-shaft classifier the app needs requires hip/pelvis AP images
 2. `backend/app/services/ml_detector.py` runs it with `onnxruntime` (CPU, letterbox, NMS).
 3. `xray_analyzer.py` prefers `onnx_local`, then the HF Space, then the heuristic.
 
-The ONNX binary is gitignored. On a fresh checkout, download it from the Kaggle kernel output
-or copy `weights/best.onnx` from a training run into `backend/models/femur_fracture.onnx`.
+The ONNX binary is tracked in git through an explicit `.gitignore` exception. On a fresh checkout
+it is already present; replace it only when installing a newly trained model.
 
 Environment overrides: `FRACTURE_ONNX_MODEL`, `USE_LOCAL_ONNX=0`, `LOCAL_ONNX_CONF`,
 `LOCAL_ONNX_IOU`.

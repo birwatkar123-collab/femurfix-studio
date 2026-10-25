@@ -190,8 +190,9 @@ recall. This is a research prototype, not a clinically validated detector; see
 
 Configuration: `LOCAL_ONNX_CONF`, `LOCAL_ONNX_IOU`, `FRACTURE_ONNX_MODEL`, `USE_LOCAL_ONNX=0`.
 If the model file is absent or `USE_LOCAL_ONNX=0`, the analyzer falls back to the HF Space (if
-configured) and then the built-in heuristic. Model binaries are gitignored; place the Kaggle
-`best.onnx` at `backend/models/femur_fracture.onnx` on a fresh checkout.
+configured) and then the built-in heuristic. The v1 ONNX binary is tracked in git; a fresh checkout
+needs no manual download. Replace it only when integrating a retrained model. Current work status
+and handoff notes are in [`PROGRESS.md`](PROGRESS.md).
 
 ---
 
