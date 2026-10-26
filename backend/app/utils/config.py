@@ -59,7 +59,17 @@ LOCAL_ONNX_MODEL = Path(
 ).expanduser()
 USE_LOCAL_ONNX = os.environ.get("USE_LOCAL_ONNX", "1").strip().lower() not in {"0", "false", "no"}
 LOCAL_ONNX_CONF = float(os.environ.get("LOCAL_ONNX_CONF", "0.15"))
+# Below LOCAL_ONNX_CONF but above this, the detector produced faint signals
+# worth surfacing to the user as "weak signal", not a flat negative.
+LOCAL_ONNX_WEAK_CONF = float(os.environ.get("LOCAL_ONNX_WEAK_CONF", "0.08"))
 LOCAL_ONNX_IOU = float(os.environ.get("LOCAL_ONNX_IOU", "0.45"))
+# Optional isotonic calibration of the detector score to an image-level fracture
+# probability. Ignored when the file is absent or its model hash does not match.
+LOCAL_ONNX_CALIBRATION = Path(
+    os.environ.get(
+        "FRACTURE_ONNX_CALIBRATION", str(MODELS_DIR / "femur_fracture.calibration.json")
+    )
+).expanduser()
 
 SUPPORTED_DEVICE_FAMILIES: List[str] = [
     "cannulated_screws",

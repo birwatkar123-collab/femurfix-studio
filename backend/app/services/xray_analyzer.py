@@ -15,7 +15,7 @@ import numpy as np
 from scipy import ndimage
 from skimage import filters, measure, morphology
 
-from ..utils.config import FRACTURE_REGIONS, HF_SPACE_ID, HF_TOKEN
+from ..utils.config import FRACTURE_REGIONS, HF_SPACE_ID, HF_TOKEN, LOCAL_ONNX_CONF, LOCAL_ONNX_WEAK_CONF
 from .ml_detector import get_detector
 
 
@@ -79,7 +79,7 @@ class XRayAnalyzer:
                     local_detection, bone_mask, silhouette, image.shape[0]
                 )
             else:
-                fracture = self._no_fracture_from_detection()
+                fracture = self._no_fracture_from_detection(local_detection)
         elif remote and remote.get("fracture"):
             fracture = self._normalise_fracture(remote["fracture"], silhouette)
             fracture["notes"].append("Fracture model: Hugging Face ZeroGPU Space")
@@ -259,7 +259,21 @@ class XRayAnalyzer:
 
         fracture = self._heuristic_fracture(mask, silhouette, anchor_ratio=anchor_ratio)
         region = self._region_from_ratio(anchor_ratio)
-        confidence = float(detection.get("confidence") or 0.0)
+        detector_confidence = float(detection.get("confidence") or 0.0)
+        calibrated = detection.get("calibrated_confidence")
+        confidence = float(calibrated) if calibrated is not None else detector_confidence
+        model_name = detection.get("model") or "YOLO detector"
+        if calibrated is not None:
+            confidence_note = (
+                f"Fracture detected by local ONNX {model_name} "
+                f"(calibrated probability {confidence:.0%}; raw detector score "
+                f"{detector_confidence:.0%})."
+            )
+        else:
+            confidence_note = (
+                f"Fracture detected by local ONNX {model_name} "
+                f"({detector_confidence:.0%} raw detector score)."
+            )
         fracture.update(
             {
                 "detected": True,
@@ -267,20 +281,26 @@ class XRayAnalyzer:
                 "ao_family": FRACTURE_REGIONS.get(region),
                 "pattern": f"Model-detected {fracture['pattern']}",
                 "confidence": round(float(np.clip(confidence, 0.0, 0.99)), 3),
+                "detector_confidence": round(detector_confidence, 3),
+                "confidence_basis": (
+                    "isotonic calibration on FracAtlas validation"
+                    if calibrated is not None
+                    else "raw detector score"
+                ),
                 "bbox_norm": box,
             }
         )
         fracture["notes"] = [
-            f"Fracture detected by local ONNX YOLO11n ({confidence:.0%} confidence).",
+            confidence_note,
             "Fracture-plane geometry is estimated from the radiograph silhouette.",
             "Region is assigned geometrically; FracAtlas has no hip-region labels.",
         ]
         return fracture
 
-    @staticmethod
-    def _no_fracture_from_detection() -> Dict[str, Any]:
+    def _no_fracture_from_detection(self, detection: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         region = "shaft"
-        return {
+        model_name = (detection or {}).get("model") or "YOLO detector"
+        fracture = {
             "detected": False,
             "region": region,
             "ao_family": FRACTURE_REGIONS.get(region),
@@ -292,10 +312,21 @@ class XRayAnalyzer:
             "angulation_deg": 0.0,
             "shortening_mm": 0.0,
             "notes": [
-                "Fracture model: local ONNX YOLO11n (FracAtlas binary pretraining).",
+                f"Fracture model: local ONNX {model_name} (FracAtlas binary pretraining).",
                 "A negative prediction is not evidence of an intact femur.",
             ],
         }
+        raw_top = float((detection or {}).get("raw_top") or 0.0)
+        if raw_top >= LOCAL_ONNX_WEAK_CONF:
+            above = [s for s in (detection or {}).get("raw_scores", []) if s >= LOCAL_ONNX_WEAK_CONF]
+            fracture["weak_signal"] = {
+                "max_confidence": round(raw_top, 3),
+                "calibrated_probability": (detection or {}).get("calibrated_raw_top"),
+                "candidates": len(above),
+                "gate_conf": float(LOCAL_ONNX_CONF),
+            }
+            fracture["pattern"] = "No confident fracture signal (weak candidates below threshold)"
+        return fracture
 
     def _heuristic_fracture(
         self,

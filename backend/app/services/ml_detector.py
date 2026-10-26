@@ -2,13 +2,21 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from PIL import Image
 
-from ..utils.config import LOCAL_ONNX_CONF, LOCAL_ONNX_IOU, LOCAL_ONNX_MODEL, USE_LOCAL_ONNX
+from ..utils.config import (
+    LOCAL_ONNX_CALIBRATION,
+    LOCAL_ONNX_CONF,
+    LOCAL_ONNX_IOU,
+    LOCAL_ONNX_MODEL,
+    USE_LOCAL_ONNX,
+)
 
 
 class DetectorUnavailable(RuntimeError):
@@ -49,6 +57,7 @@ class OnnxFractureDetector:
         self.names = self._read_names()
         self.conf = float(conf)
         self.iou = float(iou)
+        self.calibration = self._load_calibration()
 
     def _read_names(self) -> Dict[int, str]:
         raw = self.session.get_modelmeta().custom_metadata_map.get("names", "")
@@ -61,27 +70,103 @@ class OnnxFractureDetector:
                 pass
         return {0: "fracture"}
 
+    def _model_sha256(self) -> str:
+        digest = hashlib.sha256()
+        with self.path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _load_calibration(self) -> Optional[Dict[str, Any]]:
+        path = Path(LOCAL_ONNX_CALIBRATION)
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if data.get("model_sha256") != self._model_sha256():
+                print(f"[detector] {path.name} does not match this model; using raw scores")
+                return None
+            points = sorted(
+                (float(x), float(y)) for x, y in data.get("points", [])
+            )
+            if len(points) < 2:
+                return None
+        except Exception as exc:
+            print(f"[detector] could not load {path.name}: {exc}")
+            return None
+        return {
+            "source": data.get("source"),
+            "method": data.get("method", "isotonic"),
+            "xs": np.array([p[0] for p in points], dtype=np.float64),
+            "ys": np.array([p[1] for p in points], dtype=np.float64),
+        }
+
+    def _calibration_meta(self) -> Optional[Dict[str, Any]]:
+        if not self.calibration:
+            return None
+        return {
+            "source": self.calibration["source"],
+            "method": self.calibration["method"],
+        }
+
+    def _calibrate(self, score: float) -> Optional[float]:
+        if not self.calibration:
+            return None
+        xs, ys = self.calibration["xs"], self.calibration["ys"]
+        index = int(np.searchsorted(xs, float(score), side="right")) - 1
+        index = max(0, min(index, len(ys) - 1))
+        return float(ys[index])
+
     def detect(self, image: np.ndarray) -> Dict[str, Any]:
         tensor, scale, pad = self._preprocess(image)
-        pred = self.session.run(None, {self.input_name: tensor})[0]
-        boxes = self._postprocess(pred, image.shape[:2], scale, pad)
+        pred = self.session.run(None, {self.input_name: tensor})
+        pred0 = np.asarray(pred[0], dtype=np.float32)
+        raw = pred0.copy()
+        while raw.ndim > 2 and raw.shape[0] == 1:
+            raw = raw[0]  # e.g. (1,5,8400) -> (5,8400)
+        # Top scores before the confidence gate, so callers can surface a
+        # "weak signal" state instead of a flat negative.
+        score_row = raw[4] if raw.ndim == 2 and raw.shape[0] >= 5 else None
+        raw_scores = (
+            [round(float(v), 4) for v in np.sort(score_row)[-8:][::-1] if float(v) >= 0.04]
+            if score_row is not None
+            else []
+        )
+        raw_top = round(float(raw_scores[0]) if raw_scores else 0.0, 3)
+        calibrated_raw_top = (
+            round(self._calibrate(raw_top), 3) if self.calibration else None
+        )
+        boxes = self._postprocess(pred0, image.shape[:2], scale, pad)
         if not boxes:
             return {
                 "detected": False,
                 "confidence": 0.0,
+                "calibrated_confidence": None,
+                "raw_top": raw_top,
+                "calibrated_raw_top": calibrated_raw_top,
+                "raw_scores": raw_scores,
                 "bbox_norm": None,
                 "num_detections": 0,
+                "calibration": self._calibration_meta(),
                 "model": self.path.name,
             }
 
         best = boxes[0]
+        confidence = float(best["confidence"])
         return {
             "detected": True,
-            "confidence": round(float(best["confidence"]), 3),
+            "confidence": round(confidence, 3),
+            "calibrated_confidence": (
+                round(self._calibrate(confidence), 3) if self.calibration else None
+            ),
+            "raw_top": raw_top,
+            "calibrated_raw_top": calibrated_raw_top,
+            "raw_scores": raw_scores,
             "bbox_norm": [round(float(v), 4) for v in best["bbox_norm"]],
             "box_pixels": [round(float(v), 1) for v in best["bbox_pixels"]],
             "num_detections": len(boxes),
             "class_name": self.names.get(int(best["class_id"]), "fracture"),
+            "calibration": self._calibration_meta(),
             "model": self.path.name,
         }
 

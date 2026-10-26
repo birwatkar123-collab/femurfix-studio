@@ -1,0 +1,75 @@
+{
+ "model": "femur_fracture_v3.onnx",
+ "method": "isotonic",
+ "target": "P(image contains fracture | best detector score)",
+ "source": "FracAtlas val split (328 images, 82 positives), app preprocessing",
+ "points": [
+  [
+   0.0,
+   0.0545
+  ],
+  [
+   0.054,
+   0.0545
+  ],
+  [
+   0.055,
+   0.125
+  ],
+  [
+   0.058,
+   0.125
+  ],
+  [
+   0.059,
+   0.2308
+  ],
+  [
+   0.091,
+   0.2308
+  ],
+  [
+   0.092,
+   0.4
+  ],
+  [
+   0.116,
+   0.4
+  ],
+  [
+   0.119,
+   0.5
+  ],
+  [
+   0.177,
+   0.5
+  ],
+  [
+   0.179,
+   0.6316
+  ],
+  [
+   0.287,
+   0.6316
+  ],
+  [
+   0.296,
+   0.6667
+  ],
+  [
+   0.397,
+   0.6667
+  ],
+  [
+   0.402,
+   0.95
+  ],
+  [
+   0.82,
+   0.95
+  ]
+ ],
+ "model_sha256": "6fad2537fdc21c80cd4c6a37fd96a38d2070250d3158be579870a61b39fe26e0",
+ "fitted": "2026-10-26",
+ "tail_cap": 0.95
+}
