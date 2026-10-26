@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
+import { gsap } from 'gsap'
 
 export default function SimView({ caseData, onReset }) {
   const containerRef = useRef(null)
@@ -9,7 +11,12 @@ export default function SimView({ caseData, onReset }) {
   const distalNodeRef = useRef(null)
   const baseDistalPos = useRef(new THREE.Vector3())
   const baseDistalRot = useRef(new THREE.Euler())
-  const animFrameRef = useRef(null)
+  const mixerRef = useRef(null)
+  const actionRef = useRef(null)
+  const clipDurRef = useRef(0)
+  const scrubObjRef = useRef({ v: 100 })
+  const stagingRef = useRef(null)
+  const introTweenRef = useRef(null)
 
   const [selectedImplant, setSelectedImplant] = useState(caseData.recommendations?.options?.[0]?.id)
   const [loading, setLoading] = useState(false)
@@ -22,6 +29,7 @@ export default function SimView({ caseData, onReset }) {
   const activeGlbUrl = assembly?.glb_url || caseData.preview_glb_url
   const fractureInfo = caseData.analysis?.fracture || {}
   const fractureDetected = fractureInfo.detected !== false
+  const weakSignal = !fractureDetected && fractureInfo.weak_signal ? fractureInfo.weak_signal : null
   const dispMm = fractureInfo.displacement_mm ?? 6.0
   const angleDeg = fractureInfo.angle_deg ?? 18.0
   const angulationDeg = fractureInfo.angulation_deg ?? 3.5
@@ -42,21 +50,31 @@ export default function SimView({ caseData, onReset }) {
     renderer.setPixelRatio(window.devicePixelRatio)
     renderer.toneMapping = THREE.ACESFilmicToneMapping
     renderer.toneMappingExposure = 1.1
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
     container.appendChild(renderer.domElement)
+
+    // Neutral studio reflections so metal implants read as metal, not grey plastic.
+    const pmrem = new THREE.PMREMGenerator(renderer)
+    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04)
+    scene.environment = envTex
 
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.05
 
-    const light1 = new THREE.DirectionalLight(0xffffff, 1.4)
+    const light1 = new THREE.DirectionalLight(0xffffff, 1.15)
+    light1.castShadow = true
+    light1.shadow.mapSize.set(2048, 2048)
+    light1.shadow.bias = -0.0004
     light1.position.set(120, 200, 260)
     scene.add(light1)
 
-    const light2 = new THREE.DirectionalLight(0x67e8f9, 0.7)
+    const light2 = new THREE.DirectionalLight(0x67e8f9, 1.1)
     light2.position.set(-150, -80, -100)
     scene.add(light2)
 
-    scene.add(new THREE.AmbientLight(0x475569, 1.6))
+    scene.add(new THREE.AmbientLight(0x64748b, 2.0))
 
     const loader = new GLTFLoader()
     loader.load(
@@ -64,11 +82,27 @@ export default function SimView({ caseData, onReset }) {
       (gltf) => {
         scene.add(gltf.scene)
         distalNodeRef.current = null
+        mixerRef.current = null
+        actionRef.current = null
+        clipDurRef.current = 0
 
         gltf.scene.traverse((child) => {
           if (child.isMesh) {
             child.castShadow = true
             child.receiveShadow = true
+            if (!child.material) return
+            const isImplant = child.name.toLowerCase().startsWith('implant_')
+            // Guarantee a readable look even when the env map is weak/absent:
+            // lit metal (not pure chrome) and completely matte bone.
+            if (isImplant) {
+              child.material.metalness = Math.min(child.material.metalness ?? 1, 0.6)
+              child.material.roughness = Math.max(child.material.roughness ?? 0.25, 0.3)
+              child.material.envMapIntensity = 1.3
+            } else {
+              child.material.metalness = 0
+              child.material.roughness = 0.85
+              child.material.envMapIntensity = 0.6
+            }
             if (child.name.toLowerCase().includes('distal')) {
               distalNodeRef.current = child
               baseDistalPos.current.copy(child.position)
@@ -82,16 +116,60 @@ export default function SimView({ caseData, onReset }) {
         const size = box.getSize(new THREE.Vector3())
         const maxDim = Math.max(size.x, size.y, size.z, 120)
 
-        camera.position.set(center.x, center.y + maxDim * 0.15, center.z + maxDim * 1.7)
+        // Fit the shadow frustum to the model so shadows are crisp.
+        light1.position.set(center.x + maxDim * 0.5, center.y + maxDim * 1.1, center.z + maxDim * 0.8)
+        light1.target.position.copy(center)
+        scene.add(light1.target)
+        const shadowCam = light1.shadow.camera
+        shadowCam.left = -maxDim
+        shadowCam.right = maxDim
+        shadowCam.top = maxDim
+        shadowCam.bottom = -maxDim
+        shadowCam.near = 1
+        shadowCam.far = maxDim * 6
+        shadowCam.updateProjectionMatrix()
+
+        // Baked clip from the backend takes over pose control.
+        if (gltf.animations?.length) {
+          const mixer = new THREE.AnimationMixer(gltf.scene)
+          const clip = gltf.animations[0]
+          const action = mixer.clipAction(clip)
+          action.paused = true
+          action.play()
+          mixerRef.current = mixer
+          actionRef.current = action
+          clipDurRef.current = clip.duration || 3.0
+        } else if (assembly) {
+          // Fallback staging for GLBs without a baked clip: retract implants,
+          // then the gsap sequence below inserts them in order.
+          const retracts = new Map()
+          gltf.scene.traverse((child) => {
+            if (!child.isMesh || !child.name.toLowerCase().startsWith('implant_')) return
+            const childBox = new THREE.Box3().setFromObject(child)
+            const childSize = childBox.getSize(new THREE.Vector3())
+            let offset
+            if (child.name.toLowerCase().includes('nail') && !child.name.toLowerCase().includes('screw')) {
+              offset = new THREE.Vector3(0, 0, Math.max(childSize.z * 1.1, 180))
+            } else {
+              offset = new THREE.Vector3(-Math.min(Math.max(childSize.x * 2.5, 70), 160), 0, 0)
+            }
+            retracts.set(child, { offset, base: child.position.clone() })
+            child.position.add(offset)
+          })
+          stagingRef.current = retracts
+        } else {
+          stagingRef.current = null
+        }
+
+        // AP-style framing: the reconstructed bone's long axis is +z, so look
+        // in perpendicular to it (from the lateral side) with z as screen-up.
+        camera.up.set(0, 0, 1)
+        camera.position.set(center.x + maxDim * 0.8, center.y + maxDim * 1.9, center.z + maxDim * 0.3)
         camera.lookAt(center)
         controls.target.copy(center)
 
-        // If newly assembled, default to reduced (0%), else fractured view (100%)
-        if (assembly) {
-          setDisplacement(0)
-        } else {
-          setDisplacement(100)
-        }
+        // Assembled scenes begin displaced and animate into reduction.
+        setDisplacement(100)
       },
       undefined,
       (err) => console.error('Failed to load GLB:', err)
@@ -116,15 +194,41 @@ export default function SimView({ caseData, onReset }) {
     return () => {
       cancelAnimationFrame(animId)
       window.removeEventListener('resize', handleResize)
+      if (introTweenRef.current) introTweenRef.current.kill()
       if (container.contains(renderer.domElement)) {
         container.removeChild(renderer.domElement)
       }
+      envTex.dispose()
+      pmrem.dispose()
       renderer.dispose()
     }
   }, [activeGlbUrl])
 
-  // Update distal node displacement based on slider
+  // Intro: on each assembly load, play displacement 100 -> 0 (reduction) with easing.
   useEffect(() => {
+    if (!assembly || !activeGlbUrl) return
+    if (introTweenRef.current) introTweenRef.current.kill()
+    const scrub = scrubObjRef.current
+    scrub.v = 100
+    introTweenRef.current = gsap.to(scrub, {
+      v: 0,
+      duration: 4.2,
+      ease: 'power1.inOut',
+      onUpdate: () => setDisplacement(scrub.v),
+    })
+    return () => {
+      if (introTweenRef.current) introTweenRef.current.kill()
+    }
+  }, [assembly, activeGlbUrl])
+
+  // Apply the displacement: scrub the baked clip, or move the distal node.
+  useEffect(() => {
+    const action = actionRef.current
+    if (action) {
+      action.time = (1 - displacement / 100.0) * clipDurRef.current
+      mixerRef.current?.update(0)
+      return
+    }
     if (!distalNodeRef.current) return
     const ratio = displacement / 100.0
 
@@ -146,35 +250,44 @@ export default function SimView({ caseData, onReset }) {
         baseDistalRot.current.z
       )
     }
+
+    // Fallback insertion staging: hardware starts retracted and is inserted
+    // after reduction, so slider 100% (broken) = retracted and 0% (reduced)
+    // = fully inserted. Implanted parts stagger so the nail leads the screws.
+    if (assembly && stagingRef.current?.size) {
+      const total = stagingRef.current.size
+      const insertProgress = 1 - displacement / 100.0
+      let i = 0
+      for (const [child, info] of stagingRef.current.entries()) {
+        const local = Math.min(1, Math.max(0, insertProgress * total - i))
+        const ease = local * local * (3 - 2 * local)
+        child.position.copy(info.base).addScaledVector(info.offset, 1 - ease)
+        i += 1
+      }
+    }
   }, [displacement, dispMm, angulationDeg, assembly])
 
-  // Auto-play reduction / displacement animation loop
+  // Auto-play reduction / displacement animation loop (eased ping-pong)
   useEffect(() => {
     if (!isAutoPlaying) {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
       return
     }
-
-    let direction = 1
-    let current = displacement
-    const step = () => {
-      current += direction * 0.8
-      if (current >= 100) {
-        current = 100
-        direction = -1
-      } else if (current <= 0) {
-        current = 0
-        direction = 1
-      }
-      setDisplacement(current)
-      animFrameRef.current = requestAnimationFrame(step)
-    }
-    animFrameRef.current = requestAnimationFrame(step)
-
+    const scrub = scrubObjRef.current
+    scrub.v = displacement
+    const tween = gsap.to(scrub, {
+      v: 0,
+      duration: 2.2,
+      ease: 'power2.inOut',
+      repeat: -1,
+      yoyo: true,
+      onUpdate: () => setDisplacement(scrub.v),
+      onComplete: () => setDisplacement(scrub.v),
+    })
     return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+      tween.kill()
     }
-  }, [isAutoPlaying, displacement])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAutoPlaying])
 
   const assemble = async () => {
     if (!selectedImplant) return
@@ -211,7 +324,9 @@ export default function SimView({ caseData, onReset }) {
             Case <span className="font-mono text-cyan-300">{caseData.case_id}</span>
             {fractureDetected
               ? <> · {fractureInfo.region || 'shaft'} fracture · AO/OTA {fractureInfo.ao_family || '32'}</>
-              : <> · no fracture detected</>}
+              : weakSignal
+                ? <> · weak fracture signal below threshold</>
+                : <> · no fracture detected</>}
           </p>
         </div>
         <button onClick={onReset} className="px-4 py-1.5 rounded-lg border border-slate-700 text-sm hover:bg-slate-800 transition">
@@ -255,15 +370,50 @@ export default function SimView({ caseData, onReset }) {
                 </>
               )}
               <div className="flex justify-between pt-1 border-t border-slate-800/80 text-xs">
-                <span className="text-slate-500">Detector Confidence</span>
-                <span className={`font-medium ${fractureDetected ? 'text-emerald-400' : 'text-slate-500'}`}>
-                  {fractureDetected ? `${((fractureInfo.confidence ?? 0) * 100).toFixed(0)}%` : '—'}
+                <span className="text-slate-500">
+                  {fractureDetected && fractureInfo.confidence_basis?.includes('calibration')
+                    ? 'Fracture Probability'
+                    : 'Detector Confidence'}
+                </span>
+                <span
+                  className={`font-medium ${fractureDetected ? 'text-emerald-400' : weakSignal ? 'text-amber-300' : 'text-slate-500'}`}
+                  title={
+                    fractureDetected && fractureInfo.confidence_basis?.includes('calibration')
+                      ? 'Calibrated on FracAtlas validation; the raw detector score is shown for reference.'
+                      : undefined
+                  }
+                >
+                  {fractureDetected
+                    ? `${((fractureInfo.confidence ?? 0) * 100).toFixed(0)}%`
+                    : weakSignal
+                      ? `${((weakSignal.max_confidence ?? 0) * 100).toFixed(0)}% (weak)`
+                      : '—'}
+                  {fractureDetected && fractureInfo.confidence_basis?.includes('calibration') && fractureInfo.detector_confidence != null && (
+                    <span className="ml-1 text-[10px] font-normal text-slate-500">
+                      score {(fractureInfo.detector_confidence * 100).toFixed(0)}%
+                    </span>
+                  )}
                 </span>
               </div>
             </div>
             {!fractureDetected && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-200">
-                <strong>No fracture detected.</strong> This is not evidence of an intact femur. Review the radiograph or try a different image.
+              <div className={`rounded-xl border p-3 text-xs leading-relaxed ${weakSignal ? "border-amber-500/50 bg-amber-500/10 text-amber-200" : "border-amber-500/30 bg-amber-500/10 text-amber-200"}`}>
+                {weakSignal ? (
+                  <>
+                    <strong>Weak fracture signal.</strong> The model produced {weakSignal.candidates} faint
+                    candidate {weakSignal.candidates === 1 ? "line" : "lines"} (strongest raw score {((weakSignal.max_confidence ?? 0) * 100).toFixed(0)}%
+                    {weakSignal.calibrated_probability != null
+                      ? `, ≈${(weakSignal.calibrated_probability * 100).toFixed(0)}% calibrated probability`
+                      : ""}),
+                    below its {((weakSignal.gate_conf ?? 0.15) * 100).toFixed(0)}% raw-score gate.
+                    This is not a confirmation of a fracture, and a flat negative is not evidence of an
+                    intact femur — review the radiograph or consult a specialist.
+                  </>
+                ) : (
+                  <>
+                    <strong>No fracture detected.</strong> This is not evidence of an intact femur. Review the radiograph or try a different image.
+                  </>
+                )}
               </div>
             )}
           </section>
@@ -404,6 +554,7 @@ export default function SimView({ caseData, onReset }) {
                   value={displacement}
                   onChange={(e) => {
                     setIsAutoPlaying(false)
+                    introTweenRef.current?.kill()
                     setDisplacement(parseFloat(e.target.value))
                   }}
                   className="flex-1 accent-cyan-400 cursor-pointer"

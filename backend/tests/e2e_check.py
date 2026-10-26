@@ -12,6 +12,7 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.services.assembly import Assembler  # noqa: E402
+from app.services import animation_baker  # noqa: E402
 from app.services.bone_reconstructor import BoneReconstructor  # noqa: E402
 from app.services.gltf_exporter import GLTFExporter  # noqa: E402
 from app.services.image_loader import ImageLoader  # noqa: E402
@@ -52,7 +53,16 @@ def main() -> None:
     chosen = recommendations["options"][0]["id"]
     meshes, layout = Assembler().assemble(bone, frame, chosen)
     assembly = exporter.export_scene(meshes, filename="e2e_assembly.glb")
-    print(f"assembly: {assembly} ({Path(assembly).stat().st_size / 1024:.0f} KB)")
+    animated = animation_baker.bake_sequence(
+        assembly,
+        device_id=chosen,
+        insertion=layout["insertion"],
+        bone_nodes=layout["bone_nodes"],
+        implant_nodes=layout["implant_nodes"],
+        displacement_mm=float(analysis["fracture"].get("displacement_mm") or 6.0),
+        angulation_deg=float(analysis["fracture"].get("angulation_deg") or 3.5),
+    )
+    print(f"assembly: {assembly} ({Path(assembly).stat().st_size / 1024:.0f} KB, baked={animated})")
     print(f"device: {layout['device_name']} nodes={len(layout['nodes'])}")
     print("E2E OK")
 

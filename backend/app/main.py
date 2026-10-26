@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .services.assembly import Assembler, AssemblyError
+from .services import animation_baker
 from .services.bone_reconstructor import BoneReconstructor, ReconstructionError
 from .services.gltf_exporter import GLTFExporter
 from .services.image_loader import ImageLoader, ImageLoadError
@@ -335,6 +336,20 @@ def assemble_case(case_id: str, request: AssembleRequest) -> Dict[str, Any]:
         glb_path = exporter.export_scene(meshes, filename=filename, root_name=f"case_{case_id}")
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"GLB export failed: {exc}") from exc
+
+    # Bake a surgical-sequence keyframe animation into the GLB (fails soft).
+    try:
+        animation_baker.bake_sequence(
+            glb_path,
+            device_id=request.implant_id,
+            insertion=metadata["insertion"],
+            bone_nodes=metadata["bone_nodes"],
+            implant_nodes=metadata["implant_nodes"],
+            displacement_mm=float(fracture.get("displacement_mm") or 6.0),
+            angulation_deg=float(fracture.get("angulation_deg") or 3.5),
+        )
+    except Exception:
+        pass
 
     url = f"/outputs/{Path(glb_path).name}"
     state.setdefault("assemblies", {})[request.implant_id] = url

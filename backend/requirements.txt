@@ -10,6 +10,7 @@ scikit-image>=0.24
 Pillow>=10.0
 onnxruntime>=1.18
 trimesh>=4.4
+pygltflib>=1.16
 shapely>=2.0
 mapbox-earcut>=2.0
 gradio_client>=1.3
