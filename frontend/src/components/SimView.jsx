@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { gsap } from 'gsap'
 
-export default function SimView({ caseData, onReset }) {
+export default function SimView({ caseData, onReset, onReAnalyze }) {
   const containerRef = useRef(null)
   const sceneRef = useRef(null)
   const distalNodeRef = useRef(null)
@@ -25,6 +25,8 @@ export default function SimView({ caseData, onReset }) {
   const [audience, setAudience] = useState('surgeon')
   const [displacement, setDisplacement] = useState(100) // 100% = displaced fracture, 0% = anatomically reduced
   const [isAutoPlaying, setIsAutoPlaying] = useState(false)
+  const [sourceImgFailed, setSourceImgFailed] = useState(false)
+  const [regionBusy, setRegionBusy] = useState(false)
 
   const activeGlbUrl = assembly?.glb_url || caseData.preview_glb_url
   const fractureInfo = caseData.analysis?.fracture || {}
@@ -33,6 +35,13 @@ export default function SimView({ caseData, onReset }) {
   const dispMm = fractureInfo.displacement_mm ?? 6.0
   const angleDeg = fractureInfo.angle_deg ?? 18.0
   const angulationDeg = fractureInfo.angulation_deg ?? 3.5
+  // Grounded detection evidence: show the actual upload whenever it is a
+  // browser-renderable radiograph, with the detector box overlaid on it.
+  const sourceImgUrl =
+    caseData.kind === 'xray' && /\.(jpe?g|png|webp)$/i.test(caseData.sourceFilename || '')
+      ? `/api/cases/${caseData.case_id}/source-image`
+      : null
+  const bbox = fractureDetected ? fractureInfo.bbox_norm || null : null
 
   useEffect(() => {
     if (!containerRef.current || !activeGlbUrl) return
@@ -347,6 +356,38 @@ export default function SimView({ caseData, onReset }) {
                   {fractureDetected ? `${fractureInfo.region} (AO/OTA ${fractureInfo.ao_family})` : 'Not determined by model'}
                 </span>
               </div>
+              {caseData.kind === 'xray' && onReAnalyze && (
+                <div
+                  className="flex items-center justify-between gap-2"
+                  title="Region is assigned geometrically by the model. A surgeon override re-runs analysis with your chosen region."
+                >
+                  <span className="text-slate-400 text-xs">Region review</span>
+                  <div className="flex gap-1">
+                    {[['proximal', '31'], ['shaft', '32'], ['distal', '33']].map(([r, ao]) => (
+                      <button
+                        key={r}
+                        disabled={regionBusy || fractureDetected && fractureInfo.region === r}
+                        onClick={async () => {
+                          setRegionBusy(true)
+                          try {
+                            setAssembly(null)
+                            onReAnalyze(r)
+                          } finally {
+                            setRegionBusy(false)
+                          }
+                        }}
+                        className={`px-2 py-0.5 rounded-md text-[11px] font-medium transition border ${
+                          fractureDetected && fractureInfo.region === r
+                            ? 'bg-cyan-950/60 border-cyan-500/60 text-cyan-300'
+                            : 'border-slate-700 text-slate-300 hover:bg-slate-800'
+                        } disabled:opacity-60`}
+                      >
+                        {r} <span className="text-slate-500">{ao}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-slate-400">Pattern</span>
                 <span className="text-slate-200 text-right text-xs max-w-[210px]">
@@ -417,6 +458,54 @@ export default function SimView({ caseData, onReset }) {
               </div>
             )}
           </section>
+
+          {/* Grounded detection evidence: the actual upload with the model box. */}
+          {sourceImgUrl && !sourceImgFailed && (
+            <section className="space-y-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-slate-400">Detection Evidence</h2>
+              <div className="relative rounded-xl border border-slate-800 overflow-hidden bg-black shadow-sm">
+                <img
+                  src={sourceImgUrl}
+                  alt="Uploaded radiograph"
+                  className="block w-full"
+                  onError={() => setSourceImgFailed(true)}
+                />
+                {bbox && (
+                  <svg
+                    className="absolute inset-0 w-full h-full pointer-events-none"
+                    viewBox="0 0 100 100"
+                    preserveAspectRatio="none"
+                  >
+                    <rect
+                      x={bbox[0] * 100}
+                      y={bbox[1] * 100}
+                      width={(bbox[2] - bbox[0]) * 100}
+                      height={(bbox[3] - bbox[1]) * 100}
+                      fill="rgba(251,191,36,0.10)"
+                      stroke="#fbbf24"
+                      strokeWidth="1.5"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </svg>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-500 leading-relaxed">
+                {fractureDetected ? (
+                  <>
+                    Amber box = the model-detected fracture region ({((fractureInfo.confidence ?? 0) * 100).toFixed(0)}%{' '}
+                    {fractureInfo.confidence_basis?.includes('calibration') ? 'calibrated probability' : 'raw confidence'}).
+                    Educational estimate — verify the box against the original film.
+                  </>
+                ) : (
+                  <>
+                    No detection box: the model found nothing above its{' '}
+                    {((weakSignal?.gate_conf ?? 0.15) * 100).toFixed(0)}% raw-score gate
+                    {weakSignal ? `, but flagged ${weakSignal.candidates} weak candidate${weakSignal.candidates === 1 ? '' : 's'}` : ''}.
+                  </>
+                )}
+              </p>
+            </section>
+          )}
 
           {/* Implant Recommendations */}
           <section className="space-y-2">
@@ -531,7 +620,11 @@ export default function SimView({ caseData, onReset }) {
                     Surgical Reduction & Fixation Simulation
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {displacement > 50 ? 'Displaced Fractured State' : 'Anatomically Reduced with Fixation Hardware'}
+                    {displacement > 97
+                      ? 'Displaced Fractured State'
+                      : displacement > 5
+                        ? 'Reducing the fracture…'
+                        : 'Fracture contact — fragment settling / implant seating'}
                   </p>
                 </div>
                 <button

@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional
 import trimesh
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -306,6 +307,26 @@ def get_case(case_id: str) -> Dict[str, Any]:
         "assemblies": state.get("assemblies", {}),
         "disclaimer": DISCLAIMER,
     }
+
+
+@app.get("/api/cases/{case_id}/source-image")
+def source_image(case_id: str) -> FileResponse:
+    """Serve the uploaded radiograph so the UI can show detection evidence."""
+    directory = _case_dir(case_id)
+    state = _read_state(case_id)
+    path = directory / state["source"]["path"]
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Stored source image is missing")
+    media = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+        ".bmp": "image/bmp",
+        ".gif": "image/gif",
+    }
+    media_type = media.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type)
 
 
 @app.post("/api/cases/{case_id}/assemble")

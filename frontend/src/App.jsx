@@ -25,6 +25,7 @@ export default function App() {
       setCaseData({
         case_id: created.case_id,
         kind: created.kind,
+        sourceFilename: created.filename || '',
         analysis: data.analysis,
         preview_glb_url: data.preview_glb_url,
         recommendations: data.recommendations
@@ -51,6 +52,7 @@ export default function App() {
       setCaseData({
         case_id: caseData.case_id,
         kind: caseData.kind,
+        sourceFilename: caseData.sourceFilename || '',
         analysis: data.analysis,
         preview_glb_url: data.preview_glb_url,
         recommendations: data.recommendations

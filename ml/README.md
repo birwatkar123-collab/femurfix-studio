@@ -273,6 +273,10 @@ geometric region assignment.
 
 **Prepared tooling (2026-10-26, smoke-tested):**
 
+- `ml/scripts/download_roboflow.py` — pulls the dataset below once an API key exists (env
+  `RF_API_KEY`; `--format yolov8/yolov11`, pins or takes the latest version, unzips to
+  `ml/data/raw/proximal-femur-fracture/` and prints the conversion command).
+
 - `ml/scripts/prepare_region_dataset.py` — converts any licensed region-labelled YOLO export into
   the 5-class schema: class re-mapping (neck/lesser/greater trochanter per the table below,
   `normal`/`dislocation` dropped or kept as negatives via `--keep-negatives`), patient-grouped
