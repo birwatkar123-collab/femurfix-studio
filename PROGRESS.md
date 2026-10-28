@@ -364,15 +364,40 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
 
 ---
 
-## 8. Next steps, in order
+## 8b. Phase 1 execution (2026-10-28, MedTech Days roadmap — see `ROADMAP.md`)
 
-1. **Refine the calibration tail.** v3 isotonic maps raw ≥0.402 to 1.0 from a sparse val block;
+- **Grounded UI:** new `GET /api/cases/{id}/source-image` (FileResponse) and a Detection Evidence
+  panel in `SimView.jsx` (radiograph + detector-box overlay + calibrated-probability caption).
+  The region override (proximal/shaft/distal re-analyze) is now wired into the SimView header card;
+  earlier only the app shell exposed it. TestClient verified 200/404; `npm run build` passes.
+- **Physics-style animation bake:** `animation_baker.py` rewritten — reduction approaches along the
+  measured displacement vector with ease, overshoots the seat by -8%, rebounds, settles; non-planar
+  yaw/pitch/roll fragment rotation; implants (per-part keyframe grids, staggered) seat with a ~5%
+  impaction recoil. Verified numerically on `samples/2.jpg` via `backend/tests/inspect_bake.py`
+  (6 channels; nail recoil 203 mm → 9.06 mm → 0) and e2e. Times are per-part, so clip duration is
+  the longest track (~3.4 s).
+- **Region dataset A1 cleared:** Roboflow `thesisyolo-v8/proximal-femur-fracture` **v27**
+  (756 images, CC BY 4.0, no-aug 1024) downloaded via `ml/scripts/download_roboflow.py`
+  (`RF_API_KEY` env var; key read from `~/.roboflow_key.txt`, never committed; export URL shape is
+  `/{ws}/{proj}/{version}/{format}`). The export is segmentation polygons;
+  `prepare_region_dataset.py` now converts polygons → boxes. Output `ml/data/region/`
+  (gitignored): 607/68/81 splits, 371 positives (neck 289, intertrochanteric 467, subtrochanteric
+  136 boxes) + 385 explicit negatives; all splits pass `validate_labels.py`. No
+  `femoral_shaft`/`distal_femur` in this proximal-only source. Clinical review of
+  `review_manifest.csv` is the next manual step before GPU training on
+  `region_yolo_finetune_gpu.ipynb`.
+
+---
+
+## 9. Next steps, in order
+
+1. **~~Get licensed hip/femur boxes~~ DONE (2026-10-28)** — Roboflow
+   `proximal-femur-fracture` v27 downloaded and converted to `ml/data/region/`. Remaining:
+   clinical review of `ml/data/region/review_manifest.csv`, then GPU fine-tune via
+   `ml/notebooks/region_yolo_finetune_gpu.ipynb` (attach the dataset + a checkpoint on Kaggle).
+2. **Refine the calibration tail.** v3 isotonic maps raw ≥0.402 to 1.0 from a sparse val block;
    audit the support (`.kaggle_staging/calibration_report.py`) and, if needed, cap the tail at 0.95
    or switch to Platt before calling the probability final.
-2. **Get licensed hip/femur boxes.** The Roboflow `proximal-femur-fracture` export (756 images,
-   CC BY 4.0) needs a Roboflow API key; `ml/scripts/prepare_region_dataset.py` and
-   `ml/notebooks/region_yolo_finetune_gpu.ipynb` are ready for it. That, not more FracAtlas epochs,
-   is what can move hip recall.
 3. **Re-test the 9 user samples** after any model change; track detects and confidences.
    *v3 baseline 5/9 (calibrated 63–67%); v1 was 1/9, v2 2/9.*
 4. **Track external specificity.** v3 flags 19% of OrthoFrac non-fracture femur films at 0.15;

@@ -271,6 +271,28 @@ Target classes: `femoral_neck`, `intertrochanteric`, `subtrochanteric`, `femoral
 `distal_femur`. A YOLO dataset with those classes would replace both the binary detector and the
 geometric region assignment.
 
+### Prepared: Roboflow proximal-femur v27 → `ml/data/region` (2026-10-28)
+
+- Source: `thesisyolo-v8/proximal-femur-fracture` **version 27** ("without-aug-1024": 756 images,
+  1024×1024 stretched, grayscale, CC BY 4.0), downloaded with `ml/scripts/download_roboflow.py`
+  into `ml/data/raw/proximal-femur-fracture/` (gitignored).
+- The export is YOLO segmentation polygons; `prepare_region_dataset.py` now converts polygons →
+  boxes and reads the `train/valid` split-directory layout. Labels validated with
+  `validate_labels.py` (all splits pass, 0 malformed lines).
+- Converted with the 5-class schema: neck → `femoral_neck`, intertrochanteric + greater/lesser
+  ("grater") trochanter → `intertrochanteric`, subtrochanteric → `subtrochanteric`;
+  `normal`/`dislocation` kept as explicit negatives.
+- Splits by file (no patient grouping possible from Roboflow names; `--prefix-chars 0`):
+  **607 train / 68 val / 81 test** images with **371 positives / 385 negatives**.
+- Boxes: `femoral_neck` 289 (142 images), `intertrochanteric` 467 (187; includes the 62 greater +
+  111 lesser trochanter source boxes), `subtrochanteric` 136 (63).
+- `femoral_shaft` / `distal_femur` do not exist in this proximal-only source — keep the FracAtlas
+  binary detector for those regions, or annotate shaft cases before merging.
+- Clinical review: `ml/data/region/review_manifest.csv` lists every image and class; review before
+  training. Class names in the source use typos ("grater trochanter") mapped in the script.
+- Kaggle upload tip: the training notebook expects the prep output attached as a dataset
+  (see `ml/notebooks/region_yolo_finetune_gpu.ipynb`).
+
 **Prepared tooling (2026-10-26, smoke-tested):**
 
 - `ml/scripts/download_roboflow.py` — pulls the dataset below once an API key exists (env

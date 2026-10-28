@@ -41,7 +41,10 @@ DEFAULT_MAPPING = {
     "femoral_neck": "femoral_neck",
     "intertrochanteric": "intertrochanteric",
     "greater_trochanter": "intertrochanteric",
+    "greater trochanter": "intertrochanteric",
+    "grater trochanter": "intertrochanteric",  # dataset's own spelling
     "lesser_trochanter": "intertrochanteric",
+    "lesser trochanter": "intertrochanteric",
     "subtrochanteric": "subtrochanteric",
     "femoral_shaft": "femoral_shaft",
     "shaft": "femoral_shaft",
@@ -55,17 +58,52 @@ REGIONS = ["femoral_neck", "intertrochanteric", "subtrochanteric", "femoral_shaf
 def find_files(source: Path) -> list[Path]:
     if (source / "images").is_dir():
         return sorted(p for p in (source / "images").iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    files = []
+    for split in ("train", "valid", "val", "test"):
+        img_dir = source / split / "images"
+        if img_dir.is_dir():
+            files.extend(p for p in img_dir.iterdir() if p.suffix.lower() in IMAGE_EXTS)
+    if files:
+        return sorted(files)
     return sorted(p for p in source.iterdir() if p.suffix.lower() in IMAGE_EXTS)
 
 
 def label_for(source: Path, image: Path) -> Path:
     rel = image.relative_to(source)
     stem = rel.with_suffix("").as_posix()
+    # Roboflow layout: <split>/images/<stem>.<ext> beside <split>/labels/<stem>.txt
+    if (
+        len(rel.parts) >= 2
+        and rel.parts[-2] == "images"
+        and (source / rel.parts[0] / "labels").is_dir()
+    ):
+        return source / rel.parts[0] / "labels" / f"{image.stem}.txt"
     candidates = [
         source / "labels" / f"{stem}.txt",
         source / "labels" / f"{image.stem}.txt",
     ]
     return next((c for c in candidates if c.is_file()), source / "labels" / f"{image.stem}.txt")
+
+
+def parse_label_line(parts: list[str]) -> tuple[int, float, float, float, float]:
+    """Return (class_id, cx, cy, w, h) from a YOLO bbox or segmentation line.
+
+    YOLO bbox: ``class cx cy w h``. YOLO segmentation (Roboflow exports):
+    ``class x1 y1 x2 y2 ...`` (polygon, already normalised); the bounding box
+    is computed from the polygon extremes.
+    """
+    idx = int(parts[0])
+    coords = [float(v) for v in parts[1:]]
+    if len(parts) == 5:
+        cx, cy, w, h = coords
+    elif len(coords) >= 6 and len(coords) % 2 == 0:
+        xs = coords[0::2]
+        ys = coords[1::2]
+        cx, cy = (min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0
+        w, h = max(xs) - min(xs), max(ys) - min(ys)
+    else:
+        raise ValueError(f"unrecognised label line with {len(parts)} values")
+    return idx, cx, cy, w, h
 
 
 def choose_split(rng: random.Random, fractions: tuple[float, float, float]) -> str:
@@ -91,7 +129,8 @@ def main() -> None:
     parser.add_argument("--train", type=float, default=0.8)
     parser.add_argument("--val", type=float, default=0.1)
     parser.add_argument("--prefix-chars", type=int, default=3,
-                        help="Filename prefix length used as the patient/group key")
+                        help="Filename prefix length used as the patient/group key; "
+                             "0 = treat every file as its own group")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
@@ -136,11 +175,16 @@ def main() -> None:
             positives = []
             unmapped = []
             if label_src.is_file():
+                skipped = 0
                 for line in label_src.read_text().splitlines():
                     parts = line.split()
-                    if len(parts) != 5:
+                    if not parts:
                         continue
-                    idx = int(parts[0])
+                    try:
+                        idx, cx, cy, w, h = parse_label_line(parts)
+                    except (ValueError, IndexError):
+                        skipped += 1
+                        continue
                     if not 0 <= idx < len(src_names):
                         unmapped.append(f"id{idx}")
                         continue
@@ -151,7 +195,13 @@ def main() -> None:
                     if target is None:
                         unmapped.append(name)
                         continue
-                    positives.append(f"{target_ids[target]} {parts[1]} {parts[2]} {parts[3]} {parts[4]}")
+                    positives.append(
+                        f"{target_ids[target]} {cx:.7f} {cy:.7f} {w:.7f} {h:.7f}"
+                    )
+                if skipped:
+                    stats["unmapped"][f"malformed lines: {skipped}"] = (
+                        stats["unmapped"].get(f"malformed lines: {skipped}", 0) + skipped
+                    )
             if unmapped:
                 stats["unmapped"][" ".join(sorted(unmapped))] = (
                     stats["unmapped"].get(" ".join(sorted(unmapped)), 0) + 1)
@@ -160,7 +210,8 @@ def main() -> None:
                 stats["dropped"] += 1
                 continue
 
-            group = image.stem[: max(1, args.prefix_chars)].lower()
+            group = (image.stem[: max(1, args.prefix_chars)].lower()
+                     if args.prefix_chars > 0 else image.stem.lower())
             split = group_to_split.get(group) or choose_split(rng, fractions)
             group_to_split[group] = split
             counters[split] += 1

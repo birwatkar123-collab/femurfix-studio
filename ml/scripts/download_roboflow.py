@@ -76,28 +76,52 @@ def main() -> None:
     if not versions:
         raise SystemExit(f"No versions published for {slug}. Check the project name.")
 
-    chosen = None
-    for entry in sorted(versions, key=lambda v: v.get("id", ""), reverse=True):
+    def version_number(entry: dict) -> str:
+        # Roboflow shapes vary: entry["version"] when present, else the id suffix.
         num = entry.get("version")
-        has_export = bool((entry.get("export") or {}).get("link")) or entry.get("hasExport")
-        if args.version is None and has_export:
+        if num is None and "/" in (entry.get("id") or ""):
+            num = entry["id"].rsplit("/", 1)[-1]
+        if num is None:
+            raise SystemExit(f"Cannot determine version for entry {entry}")
+        return str(num)
+
+    def export_formats(entry: dict) -> set:
+        raw = entry.get("exports")
+        if isinstance(raw, list):
+            return {str(x) for x in raw}
+        if isinstance(raw, str):
+            return set(raw.split())
+        export = entry.get("export") or {}
+        return {"ready"} if export.get("link") else set()
+
+    chosen = None
+    for entry in sorted(versions, key=lambda v: version_number(v), reverse=True):
+        num = version_number(entry)
+        if args.version is None and export_formats(entry):
             chosen = entry
             break
-        if args.version is not None and str(num) == str(args.version):
+        if args.version is not None and num == str(args.version):
             chosen = entry
             break
     if chosen is None:
         raise SystemExit(
             f"Version {args.version or '(any)'} with a ready export not found. "
-            f"Published: {[v.get('version') for v in versions]}"
+            f"Published: {[version_number(v) + ':' + v.get('name', '') for v in versions][:10]}"
         )
+    available = export_formats(chosen)
+    if available and args.format not in available:
+        print(f"note: version {version_number(chosen)} exports: {sorted(available)}; "
+              f"trying '{args.format}' anyway")
 
-    version_num = chosen.get("version")
-    print(f"project={slug} version={version_num} images~{chosen.get('images') or '?'}")
+    version_num = version_number(chosen)
+    print(f"project={slug} version={version_num} name={chosen.get('name')} images={chosen.get('images')}")
 
     # Request the export (Roboflow generates it on first request; this call
-    # returns a `export.link` json or a 301/queued response we poll).
-    export_url = f"https://api.roboflow.com/dataset/{args.workspace}/{args.project}/{args.format}"
+    # returns an `export.link` json or a queued response we would retry).
+    export_url = (
+        f"https://api.roboflow.com/{args.workspace}/{args.project}/"
+        f"{version_num}/{args.format}"
+    )
     export = _api_request(export_url, {"api_key": key, "version": str(version_num), "overwrite": "false"})
     payload = export.get("export") or {}
     link = payload.get("link")

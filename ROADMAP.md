@@ -18,8 +18,12 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
   with overshoot past the seat (-8%), damped settle, non-planar yaw/pitch/roll path, staggered
   implant entries with a ~5% impaction recoil, per-part keyframe grids. Verified on `samples/2.jpg`
   (6 channels) and e2e (`backend/tests/inspect_bake.py`).
-- [~] **A1 region dataset** — blocked on a Roboflow API key. Downloader scaffold added:
-  `ml/scripts/download_roboflow.py` (env `RF_API_KEY`; runs `prepare_region_dataset.py` next).
+- [-] **A1 region dataset** — ✅ **cleared 2026-10-28**: Roboflow v27 (756 imgs) downloaded with
+  `ml/scripts/download_roboflow.py` (key kept at `~/.roboflow_key.txt`, outside the repo; delete or
+  rotate it when done), converted to boxes, validated: `ml/data/region/` = 607/68/81 splits,
+  371 positives (femoral_neck 289 / intertrochanteric 467 / subtrochanteric 136) + 385 negatives.
+  Remaining: clinical review + GPU training (`region_yolo_finetune_gpu.ipynb`). Downloader fix:
+  export URL is `/{ws}/{proj}/{version}/{format}` (not `/dataset/...`).
 
 ---
 
