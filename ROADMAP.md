@@ -6,7 +6,11 @@
 AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGRESS.md`.
 
 > Current baseline: v3 detector deployed (test image F1 0.715, 5/9 user samples, hip recall weak),
-> isotonic calibration capped at 0.95, keyframed GLB surgical animation, guarded no-fracture UX.
+> isotonic calibration capped at 0.95, a second **anatomical-zone model** labelling the detected
+> fracture (v3 stays authoritative, `PROGRESS.md` §8d), keyframed GLB surgical animation, guarded
+> no-fracture UX.
+> **Open blocker for anything needing a GPU run:** the Kaggle API key on this machine is invalid
+> server-side and no replacement is installed, so `kernels push` fails until §7's minting step is done.
 
 ## Phase 1 execution status (updated 2026-10-29)
 

@@ -1,6 +1,7 @@
 # Progress & Handoff
 
-**Last updated:** 2026-10-29 (two-model zone classifier shipped and committed — see §8d)
+**Last updated:** 2026-10-29 (two-model zone classifier shipped and pushed; Kaggle key expired
+server-side with no replacement installed yet — see §8d and §7)
 **Branch:** `main`, pushed — `origin/main` == `HEAD` as of 2026-10-29, so a fresh clone has both ONNX
 models and the two-model path needs no setup.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
@@ -22,6 +23,8 @@ The local detector is a **research prototype** and its sensitivity is the main o
 | Detector score calibration | Isotonic on FracAtlas val, hash-locked to the ONNX; test Brier 0.101 (section 3) |
 | No-fracture safety UX | Implemented, verified, pushed (`a88adc0`) |
 | Region-labeled model (v4) | **Not a drop-in replacement** (see §8c). Ships as the secondary **zone classifier** at `backend/models/femur_region.onnx`; v3 remains the fracture detector |
+| Two-model design (plan `distant-fjord-trout`) | **Complete** — all five steps plus the verification list implemented, browser-checked, committed (`2c8d338`) and pushed |
+| Kaggle training access | **Blocked 2026-10-29** — the API key on this machine is invalid server-side and no replacement is installed yet, so kernels cannot be pushed (§7, §9.5) |
 
 ### Deployed model facts (v3 since 2026-10-26)
 
@@ -385,15 +388,37 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
 
 ## 7. Credentials / security
 
-- Kaggle API token is stored **only** at `~/.kaggle/access_token` on this machine. It is not in the
-  repo; `.kaggle_staging/` is gitignored.
-- The token was exposed in chat during setup. **Rotate it** at Kaggle → Settings → API if that has
-  not been done, then update `~/.kaggle/access_token`.
+- Kaggle API token lives **only** at `~/.kaggle/access_token` on this machine (`KGAT…2892`,
+  sha256 `32c8127570603476…`, written 2026-10-25). Never in the repo; `.kaggle_staging/` is gitignored.
+- **That token is no longer valid server-side (checked 2026-10-29).** OAuth introspection returns
+  `active: False` (username still resolves), and `kaggle quota` — which authenticated fine with the
+  same file ~20 minutes earlier — now prints the auth help instead. The file on disk is unchanged, and
+  the revocation call below never executed, so the expiry came from outside this session (console
+  click by the owner, or Kaggle). Treat the exposed-in-chat secret as dead: **the one open step is
+  minting a replacement** at Kaggle → Settings → API, then writing it to that file. Until then
+  `kaggle kernels push` cannot authenticate, which blocks any further training runs.
+- Revocation *is* scriptable, minting is not: `kagglesdk.users…ExpireApiTokenRequest(token=…, reason=…)`
+  via `client.users.account_client.expire_api_token()` expires a key by value. There is no
+  create-token endpoint, and `kaggle auth revoke` is a **no-op** for a static API key (it needs an
+  OAuth refresh token, `kaggle_creds.py:139`).
+- **CLI 2.2.5 gotcha:** `_authenticate_with_access_token()` (`kaggle_api_extended.py:1562`) rejects any
+  token whose introspection is not `active`. So a sudden "Authentication required" wall means the key
+  was expired server-side, not that config is wrong — and it makes `~/.kaggle/access_token` the only
+  thing to fix. `kaggle kernels run` still does not exist; `kernels push` runs the kernel.
+- **Roboflow: not rotated, and nothing local to clean.** `RF_API_KEY` is unset in the shell and the
+  user env, `roboflow.json` / `~/.config/roboflow` are gone, and a working-tree sweep for key literals
+  (including `.kaggle_staging/`, `.qoder/`) found nothing. The key itself still needs **Regenerate** in
+  the Roboflow console — there is no key-management API.
 - **The GitHub repo is `PUBLIC`** (`femurfix-studio`, `birwatkar123-collab`). Anything ever pushed is
   effectively disclosed — treat the two items above as rotated-or-broken, not to-do-later.
 - Before any future push, run `git status` and confirm no `kaggle.json`, token, `.env`, or case data
-  is staged. No secrets are currently tracked (re-verified line by line before the 2026-10-29 push).
-- HF Space credentials belong in env vars (`HF_SPACE_ID`, `HF_TOKEN`), never in the repo.
+  is staged. No secrets are currently tracked (re-verified line by line before the 2026-10-29 push;
+  `git log --all -S"KGAT_"` is empty across all refs).
+- Never paste a freshly minted secret into this chat, or run the installer with the `!` prefix — the
+  transcript is exactly how the first key leaked. `kaggle quota` plus a changed file SHA is enough to
+  prove the swap worked.
+- HF Space credentials belong in env vars (`HF_SPACE_ID`, `HF_TOKEN`), never in the repo. Both are
+  currently unset on this machine, and the code imports them as optional.
 
 ---
 
@@ -596,11 +621,12 @@ its scores are displayed as raw detector scores and must never be presented as p
 4. **Track external specificity.** v3 flags 19% of OrthoFrac non-fracture femur films at 0.15;
    re-check this when the zone model has broader coverage, and keep the calibrated-probability
    display rather than a bare "detected" claim.
-5. **Rotate the exposed credentials — the repo is `PUBLIC`** (`gh repo view --json visibility`).
-   Both ONNX models and the whole history are now on GitHub, so the §7 items are urgent: the Kaggle
-   token appeared in chat and the Roboflow key was exposed before its file was deleted. Rotate both,
-   then update `~/.kaggle/access_token` and `RF_API_KEY`. No secret is in the repo itself — §7 was
-   re-checked line by line against the pushed diff.
+5. **Finish the credential rotation (half-done).** The old Kaggle key is already invalid server-side
+   (§7), so only the minting half is left: generate a replacement in the Kaggle console, write it to
+   `~/.kaggle/access_token` without routing it through this chat, and confirm with `kaggle quota`.
+   Roboflow still needs its console **Regenerate** — no local copy exists, so it is purely a
+   server-side action. Until the Kaggle key is replaced, no training kernel can be pushed.
+   The repo is `PUBLIC` (`gh repo view --json visibility`), so these are not optional.
 6. **Finish A3.** The zone classifier names hip zones on detected fractures today; it does not yet
    feed implant selection or the surgical plan, and it has no shaft/distal classes. A2 is the
    prerequisite for the latter.
