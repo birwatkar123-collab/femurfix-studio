@@ -438,7 +438,9 @@ Entry script is `ml/scripts/train_region_kaggle.py`; the push folder is `D:\k_pu
 **CLI push works** — `kaggle kernels push -p D:\k_pull` succeeds when the folder's
 `kernel-metadata.json` came from `kaggle kernels init` and has `is_private`/`enable_gpu`/... as
 strings. The earlier `409 Conflict` came from hand-written metadata that didn't match the existing
-kernel record. `kaggle kernels run` does **not** exist in CLI 2.2.4; use `push` + `status` + `output`.
+kernel record. `kaggle kernels run` does **not** exist in the CLI (checked again on 2.2.5, installed
+2026-10-29; `kernels push` itself runs the kernel, then use `status` + `output`, and `logs` for the
+execution log).
 
 **Six failure modes already fixed (do not regress):**
 
