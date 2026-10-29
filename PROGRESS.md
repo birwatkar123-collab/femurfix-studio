@@ -1,8 +1,8 @@
 # Progress & Handoff
 
 **Last updated:** 2026-10-29 (two-model zone classifier shipped and committed — see §8d)
-**Branch:** `main`. Local-only (**unpushed**) since `bc5d66c`: `2199d89`, `4fe7ef7`, `0a66631`,
-`2c8d338` (the two-model design) and `81f346e` (documentation).
+**Branch:** `main`. History is **unpushed** past `bc5d66c` (the v3 deploy); the newest commits carry
+the two-model design and its documentation — `git log --oneline bc5d66c..HEAD` for the exact list.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
 chat session is recorded here.
 
