@@ -1,8 +1,8 @@
 # Progress & Handoff
 
 **Last updated:** 2026-10-29 (two-model zone classifier shipped and committed — see §8d)
-**Branch:** `main`. History is **unpushed** past `bc5d66c` (the v3 deploy); the newest commits carry
-the two-model design and its documentation — `git log --oneline bc5d66c..HEAD` for the exact list.
+**Branch:** `main`, pushed — `origin/main` == `HEAD` as of 2026-10-29, so a fresh clone has both ONNX
+models and the two-model path needs no setup.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
 chat session is recorded here.
 
@@ -272,7 +272,7 @@ is why the hip-weighting run buys recall at the cost of specificity.
 
 ## 4. Repo / local state
 
-Committed (pushed history ends at `bc5d66c`; `2199d89`/`4fe7ef7`/`0a66631`/`2c8d338` are local-only):
+Committed and pushed (`origin/main` == `HEAD`; the two-model design landed in `2c8d338`):
 
 - `backend/models/femur_fracture.onnx` is **v3** and intentionally tracked: 38,138,284 bytes,
   `6fad2537…fe26e0`, with `femur_fracture.calibration.json` alongside it. Verified byte-identical to
@@ -389,8 +389,10 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
   repo; `.kaggle_staging/` is gitignored.
 - The token was exposed in chat during setup. **Rotate it** at Kaggle → Settings → API if that has
   not been done, then update `~/.kaggle/access_token`.
+- **The GitHub repo is `PUBLIC`** (`femurfix-studio`, `birwatkar123-collab`). Anything ever pushed is
+  effectively disclosed — treat the two items above as rotated-or-broken, not to-do-later.
 - Before any future push, run `git status` and confirm no `kaggle.json`, token, `.env`, or case data
-  is staged. No secrets are currently tracked.
+  is staged. No secrets are currently tracked (re-verified line by line before the 2026-10-29 push).
 - HF Space credentials belong in env vars (`HF_SPACE_ID`, `HF_TOKEN`), never in the repo.
 
 ---
@@ -592,8 +594,11 @@ its scores are displayed as raw detector scores and must never be presented as p
 4. **Track external specificity.** v3 flags 19% of OrthoFrac non-fracture femur films at 0.15;
    re-check this when the zone model has broader coverage, and keep the calibrated-probability
    display rather than a bare "detected" claim.
-5. **Push the local-only commits.** `2c8d338` and its three predecessors are unpushed; nothing is
-   left uncommitted except the two artefacts named in §4. Re-read §7 before pushing.
+5. **Rotate the exposed credentials — the repo is `PUBLIC`** (`gh repo view --json visibility`).
+   Both ONNX models and the whole history are now on GitHub, so the §7 items are urgent: the Kaggle
+   token appeared in chat and the Roboflow key was exposed before its file was deleted. Rotate both,
+   then update `~/.kaggle/access_token` and `RF_API_KEY`. No secret is in the repo itself — §7 was
+   re-checked line by line against the pushed diff.
 6. **Finish A3.** The zone classifier names hip zones on detected fractures today; it does not yet
    feed implant selection or the surgical plan, and it has no shaft/distal classes. A2 is the
    prerequisite for the latter.
