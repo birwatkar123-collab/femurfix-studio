@@ -1,7 +1,8 @@
 # Progress & Handoff
 
-**Last updated:** 2026-10-26
-**Branch:** `main` (guards pushed as `a88adc0`; v3 install, calibration, and docs are local/uncommitted)
+**Last updated:** 2026-10-29
+**Branch:** `main` (guards in `a88adc0`, v3 deploy in `bc5d66c`; Phase 1 commits `2199d89` and
+`4fe7ef7` are local-only)
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
 chat session is recorded here.
 
@@ -20,7 +21,7 @@ The local detector is a **research prototype** and its sensitivity is the main o
 | v2 detector (YOLO11s @960) | Trained and evaluated; not installed (v3 supersedes it) |
 | Detector score calibration | Isotonic on FracAtlas val, hash-locked to the ONNX; test Brier 0.101 (section 3) |
 | No-fracture safety UX | Implemented, verified, pushed (`a88adc0`) |
-| Region-labeled model | Not started (needs a licensed hip/pelvis box dataset; see `ml/README.md`) |
+| Region-labeled model (v4) | **Trained 2026-10-29** on Kaggle from the v3 backbone: test mAP50 0.480, neck AP50 0.636 (see §8c); ONNX swap pending |
 
 ### Deployed model facts (v3 since 2026-10-26)
 
@@ -389,12 +390,87 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
 
 ---
 
+## 8c. v4 region training on Kaggle (2026-10-29) — **resume point**
+
+**Datasets (private, user `birwatkar`):**
+
+| Dataset | Contents | Mount on kernel |
+| --- | --- | --- |
+| `birwatkar/femurfix-region-dataset` | 756 images + labels + `data.yaml` + `mapping.json` | `/kaggle/input/datasets/birwatkar/femurfix-region-dataset/region_dataset/` |
+| `birwatkar/femurfix-v3-checkpoint` | `best_v3.pt` (18.3 MB) | `/kaggle/input/datasets/birwatkar/femurfix-v3-checkpoint/` |
+
+Kernel: **`birwatkar/femurfix-5-class-region-training`** (script kernel, T4 GPU, internet on).
+Entry script is `ml/scripts/train_region_kaggle.py`; the push folder is `D:\k_pull\`
+(`kernel-metadata.json` + renamed `femurfix-5-class-region-training.py`).
+
+**CLI push works** — `kaggle kernels push -p D:\k_pull` succeeds when the folder's
+`kernel-metadata.json` came from `kaggle kernels init` and has `is_private`/`enable_gpu`/... as
+strings. The earlier `409 Conflict` came from hand-written metadata that didn't match the existing
+kernel record. `kaggle kernels run` does **not** exist in CLI 2.2.4; use `push` + `status` + `output`.
+
+**Six failure modes already fixed (do not regress):**
+
+1. `ModuleNotFoundError: ultralytics` — script bootstraps `pip install ultralytics>=8.3,<9`
+   (`enable_internet: "true"` required).
+2. Kaggle mounts under `/kaggle/input/datasets/<user>/<slug>/` (three levels) — resolve paths with
+   `rglob`, never hardcode.
+3. Uploaded `data.yaml` contains the authoring machine's absolute path
+   (`D:/New folder (3)/...`); the kernel rewrites it to `/kaggle/working/data.yaml` with
+   `path` = mounted dataset root.
+4. The dataset folder contains a *stray duplicate* `data.yaml` at the mount root; pick the copy
+   whose sibling `images/val` exists.
+5. `data.yaml` also gets uploaded **inside** the auto-extracted `region_dataset/` subfolder — that
+   is the copy that has the images.
+6. `metrics.box.maps` is a **numpy array** in Ultralytics 8.4, not a dict (`AttributeError` killed the
+   first completed run *after* training). Use `np.ravel(np.asarray(metrics.box.maps))` + `metrics.names`.
+
+**Result of run v6 (training + test eval completed before the crash):** YOLO11s @960, 60 epochs,
+early-stopped ~22 min total, test split (81 images / 102 boxes):
+
+| Class | Imgs | Boxes | P | R | mAP50 | mAP50-95 |
+| --- | --- | --- | --- | --- | --- | --- |
+| all | 81 | 102 | 0.437 | 0.575 | **0.480** | **0.248** |
+| femoral_neck | 12 | 24 | 0.473 | 0.667 | 0.636 | 0.387 |
+| intertrochanteric | 22 | 55 | 0.332 | 0.655 | 0.424 | 0.183 |
+| subtrochanteric | 9 | 23 | 0.507 | 0.403 | 0.379 | 0.174 |
+
+This beats v3 (test mAP50 0.404) and is the first model that names the fracture region directly.
+
+**Run v7 (`2026-10-29 ~03:30` local) is the clean re-run** with the metrics fix + ONNX export +
+`best_region.pt` copy. Expected artifacts in the kernel Output:
+
+- `femur_region.onnx` (960×960, 5 classes)
+- `region_summary.json`
+- `best_region.pt`
+
+**To resume:**
+
+```powershell
+kaggle kernels status birwatkar/femurfix-5-class-region-training
+kaggle kernels output birwatkar/femurfix-5-class-region-training -p D:\region_out
+```
+
+Then, if the ONNX exists: copy it over `backend/models/femur_fracture.onnx`, delete
+`backend/models/femur_fracture.calibration.json` (hash-locked to v3), re-run
+`backend/tests/eval_onnx_test_split.py --split test` and `backend/tests/sample_baseline.py`
+(v3 reference: 5/9), then teach `xray_analyzer.py` to take the region label from the model's
+`_read_names` instead of the geometric fallback. Regenerate calibration before shipping.
+
+**Still pending from Phase 1:** the user's verdict on the 20 boxed spot-review images
+(`ml/data/region/spot_review/`); the Roboflow API key file was deleted — rotate the key in Roboflow
+settings.
+
+---
+
 ## 9. Next steps, in order
 
 1. **~~Get licensed hip/femur boxes~~ DONE (2026-10-28)** — Roboflow
    `proximal-femur-fracture` v27 downloaded and converted to `ml/data/region/`. Remaining:
    clinical review of `ml/data/region/review_manifest.csv`, then GPU fine-tune via
    `ml/notebooks/region_yolo_finetune_gpu.ipynb` (attach the dataset + a checkpoint on Kaggle).
+   **Update 2026-10-29:** training ran through the CLI kernel instead (see §8c). Test mAP50 0.480.
+   Remaining: collect v7 artifacts, swap the ONNX into the backend, recalibrate, extend
+   `xray_analyzer.py` for the 5-class output.
 2. **Refine the calibration tail.** v3 isotonic maps raw ≥0.402 to 1.0 from a sparse val block;
    audit the support (`.kaggle_staging/calibration_report.py`) and, if needed, cap the tail at 0.95
    or switch to Platt before calling the probability final.

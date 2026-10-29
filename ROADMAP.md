@@ -8,7 +8,7 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
 > Current baseline: v3 detector deployed (test image F1 0.715, 5/9 user samples, hip recall weak),
 > isotonic calibration capped at 0.95, keyframed GLB surgical animation, guarded no-fracture UX.
 
-## Phase 1 execution status (2026-10-28)
+## Phase 1 execution status (updated 2026-10-29)
 
 - [x] **A6 grounded UI** — `GET /api/cases/{id}/source-image` serves the upload; SimView shows a
   **Detection Evidence** panel (radiograph + amber detector-box overlay + calibrated probability
@@ -18,12 +18,15 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
   with overshoot past the seat (-8%), damped settle, non-planar yaw/pitch/roll path, staggered
   implant entries with a ~5% impaction recoil, per-part keyframe grids. Verified on `samples/2.jpg`
   (6 channels) and e2e (`backend/tests/inspect_bake.py`).
-- [-] **A1 region dataset** — ✅ **cleared 2026-10-28**: Roboflow v27 (756 imgs) downloaded with
-  `ml/scripts/download_roboflow.py` (key kept at `~/.roboflow_key.txt`, outside the repo; delete or
-  rotate it when done), converted to boxes, validated: `ml/data/region/` = 607/68/81 splits,
-  371 positives (femoral_neck 289 / intertrochanteric 467 / subtrochanteric 136) + 385 negatives.
-  Remaining: clinical review + GPU training (`region_yolo_finetune_gpu.ipynb`). Downloader fix:
-  export URL is `/{ws}/{proj}/{version}/{format}` (not `/dataset/...`).
+- [x] **A1 region dataset + v4 training** — Roboflow v27 (756 imgs) converted to boxes and validated:
+  `ml/data/region/` = 607/68/81 splits, 371 positives (femoral_neck 289 / intertrochanteric 467 /
+  subtrochanteric 136) + 385 negatives. Uploaded to Kaggle and trained from the v3 backbone via the
+  CLI kernel `birwatkar/femurfix-5-class-region-training`: **test mAP50 0.480 / mAP50-95 0.248**
+  (neck AP50 0.636, intertrochanteric 0.424, subtrochanteric 0.379) — up from v3's 0.404. Details
+  and resume steps in `PROGRESS.md` §8c.
+  Remaining: download `femur_region.onnx`, swap into `backend/models/`, recalibrate, extend
+  `xray_analyzer.py` for 5-class output, and the user's verdict on the 20 spot-review images.
+  (Roboflow key file deleted — rotate it in settings.)
 
 ---
 
