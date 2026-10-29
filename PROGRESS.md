@@ -2,9 +2,8 @@
 
 **Last updated:** 2026-10-29 (Phase 2 opened; the detector-recall premise was measured and corrected —
 see §8e. Kaggle key still expired server-side with no replacement installed — §7, §8d)
-**Branch:** `main`. `origin/main` is at `2c8d338` + the doc commits up to `128c4b5`; `64d99a0` (§8e
-miss diagnosis) is **committed locally and not yet pushed**. Either way a fresh clone has both ONNX
-models and the two-model path needs no setup.
+**Branch:** `main`, pushed — `origin/main` == `HEAD` as of 2026-10-29, so a fresh clone has both ONNX
+models, the two-model path needs no setup, and §8e's `miss_diagnosis.py` is runnable out of the box.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
 chat session is recorded here.
 
@@ -284,7 +283,7 @@ is why the hip-weighting run buys recall at the cost of specificity.
 
 ## 4. Repo / local state
 
-Committed (the two-model design landed in `2c8d338` and is pushed; `64d99a0` for §8e is local only):
+Committed and pushed (two-model design in `2c8d338`, §8e miss diagnosis in `64d99a0`):
 
 - `backend/models/femur_fracture.onnx` is **v3** and intentionally tracked: 38,138,284 bytes,
   `6fad2537…fe26e0`, with `femur_fracture.calibration.json` alongside it. Verified byte-identical to
