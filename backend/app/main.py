@@ -222,6 +222,7 @@ def analyze_case(case_id: str, payload: Optional[AnalyzeRequest] = None) -> Dict
                 fracture = dict(fracture)
                 fracture["region"] = payload.region_hint
                 fracture["ao_family"] = FRACTURE_REGIONS.get(payload.region_hint)
+                fracture["region_source"] = "user_override"
                 fracture.setdefault("notes", []).append(
                     f"Region overridden by the user to '{payload.region_hint}'."
                 )

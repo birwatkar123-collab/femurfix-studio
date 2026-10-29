@@ -76,6 +76,7 @@ runs/
 *.pt
 *.onnx
 !backend/models/femur_fracture.onnx
+!backend/models/femur_region.onnx
 
 # Kaggle CLI staging
 .kaggle_staging/

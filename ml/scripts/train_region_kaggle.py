@@ -95,12 +95,22 @@ print(f"best: {best}")
 
 metrics = YOLO(str(best)).val(data=str(DATA_YAML), split="test", imgsz=960, batch=8, device=0, plots=True)
 
-# Ultralytics 8.4 returns per-class AP as a numpy array (not a dict).
-maps = np.ravel(np.asarray(metrics.box.maps))
+# Ultralytics 8.4 returns per-class AP as numpy arrays (not dicts). NOTE: `box.maps`
+# is the per-class mAP@50-95 vector; `box.maps50` is per-class mAP@50. Reading the
+# wrong one produced a region_summary.json whose "per_class_ap50" was really AP@50-95.
+def _ravel(values):
+    return [float(v) for v in np.ravel(np.asarray(values))]
+
 names = getattr(metrics, "names", {}) or {}
-per_class = {str(names.get(i, i)): float(maps[i]) for i in range(len(maps))}
+ap50 = _ravel(getattr(metrics.box, "maps50", metrics.box.maps))
+ap50_95 = _ravel(metrics.box.maps)
+per_class = {
+    str(names.get(i, i)): {"AP50": ap50[i] if i < len(ap50) else None,
+                           "AP50_95": ap50_95[i] if i < len(ap50_95) else None}
+    for i in range(len(ap50_95))
+}
 summary = {
-    "per_class_ap50": per_class,
+    "per_class": per_class,
     "mAP50": float(metrics.box.map50),
     "mAP50-95": float(metrics.box.map),
     "imgsz": 960,

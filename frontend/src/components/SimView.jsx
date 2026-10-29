@@ -32,6 +32,22 @@ export default function SimView({ caseData, onReset, onReAnalyze }) {
   const fractureInfo = caseData.analysis?.fracture || {}
   const fractureDetected = fractureInfo.detected !== false
   const weakSignal = !fractureDetected && fractureInfo.weak_signal ? fractureInfo.weak_signal : null
+  const zoneClass = fractureInfo.model_class && fractureInfo.model_class !== 'fracture'
+    ? fractureInfo.model_class.replace(/_/g, ' ')
+    : null
+  const viewHint = fractureInfo.view_hint
+    ? `${fractureInfo.view_hint.class_name.replace(/_/g, ' ')} (${Math.round(fractureInfo.view_hint.score * 100)}%)`
+    : null
+  const viewContext = viewHint
+    ? <> The anatomical-zone model reads this film as <em> {viewHint} </em>
+        — view context only, it does not detect fractures.</>
+    : null
+  const regionSourceLabel = {
+    zone_model: 'anatomical-zone model',
+    model: 'detector class',
+    user_override: 'surgeon override',
+    geometric: 'silhouette geometry',
+  }[fractureInfo.region_source] || null
   const dispMm = fractureInfo.displacement_mm ?? 6.0
   const angleDeg = fractureInfo.angle_deg ?? 18.0
   const angulationDeg = fractureInfo.angulation_deg ?? 3.5
@@ -352,14 +368,34 @@ export default function SimView({ caseData, onReset, onReAnalyze }) {
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 space-y-2.5 text-sm shadow-sm">
               <div className="flex justify-between pb-1 border-b border-slate-800/80">
                 <span className="text-slate-400">Region & Classification</span>
-                <span className="font-medium text-cyan-300 capitalize">
-                  {fractureDetected ? `${fractureInfo.region} (AO/OTA ${fractureInfo.ao_family})` : 'Not determined by model'}
+                <span className="font-medium text-cyan-300 capitalize text-right">
+                  {fractureDetected ? (
+                    <>
+                      {`${fractureInfo.region} (AO/OTA ${fractureInfo.ao_family})`}
+                      {regionSourceLabel && (
+                        <span className="block text-[11px] font-normal text-slate-400 normal-case">
+                          {zoneClass ? `zone: ${zoneClass} · ` : ''}
+                          {fractureInfo.region_score != null && `${Math.round(fractureInfo.region_score * 100)}% · `}
+                          via {regionSourceLabel}
+                        </span>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      Not determined by model
+                      {viewHint && (
+                        <span className="block text-[11px] font-normal text-slate-400 normal-case">
+                          film reads as {viewHint} — view context only
+                        </span>
+                      )}
+                    </>
+                  )}
                 </span>
               </div>
               {caseData.kind === 'xray' && onReAnalyze && (
                 <div
                   className="flex items-center justify-between gap-2"
-                  title="Region is assigned geometrically by the model. A surgeon override re-runs analysis with your chosen region."
+                  title={`Region source: ${regionSourceLabel || 'not determined'}. A surgeon override re-runs analysis with your chosen region.`}
                 >
                   <span className="text-slate-400 text-xs">Region review</span>
                   <div className="flex gap-1">
@@ -449,10 +485,12 @@ export default function SimView({ caseData, onReset, onReAnalyze }) {
                     below its {((weakSignal.gate_conf ?? 0.15) * 100).toFixed(0)}% raw-score gate.
                     This is not a confirmation of a fracture, and a flat negative is not evidence of an
                     intact femur — review the radiograph or consult a specialist.
+                    {viewContext}
                   </>
                 ) : (
                   <>
                     <strong>No fracture detected.</strong> This is not evidence of an intact femur. Review the radiograph or try a different image.
+                    {viewContext}
                   </>
                 )}
               </div>

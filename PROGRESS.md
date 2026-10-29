@@ -1,8 +1,8 @@
 # Progress & Handoff
 
-**Last updated:** 2026-10-29
-**Branch:** `main` (guards in `a88adc0`, v3 deploy in `bc5d66c`; Phase 1 commits `2199d89` and
-`4fe7ef7` are local-only)
+**Last updated:** 2026-10-29 (two-model zone classifier shipped — see §8d)
+**Branch:** `main` at `0a66631`. `2199d89`, `4fe7ef7` and `0a66631` are **local-only (unpushed)**;
+pushed history ends at `bc5d66c`. The two-model work below is **uncommitted**.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
 chat session is recorded here.
 
@@ -21,7 +21,7 @@ The local detector is a **research prototype** and its sensitivity is the main o
 | v2 detector (YOLO11s @960) | Trained and evaluated; not installed (v3 supersedes it) |
 | Detector score calibration | Isotonic on FracAtlas val, hash-locked to the ONNX; test Brier 0.101 (section 3) |
 | No-fracture safety UX | Implemented, verified, pushed (`a88adc0`) |
-| Region-labeled model (v4) | **Trained 2026-10-29** on Kaggle from the v3 backbone: test mAP50 0.480, neck AP50 0.636 (see §8c); ONNX swap pending |
+| Region-labeled model (v4) | **Not a drop-in replacement** (see §8c). Ships as the secondary **zone classifier** at `backend/models/femur_region.onnx`; v3 remains the fracture detector |
 
 ### Deployed model facts (v3 since 2026-10-26)
 
@@ -272,20 +272,29 @@ is why the hip-weighting run buys recall at the cost of specificity.
 
 ## 4. Repo / local state
 
-Committed and pushed:
+Committed (pushed history ends at `bc5d66c`; `2199d89`/`4fe7ef7`/`0a66631` are local-only):
 
-- `main` at `a88adc0` (model v1 + guards).
-- `backend/models/femur_fracture.onnx` is intentionally tracked.
+- `backend/models/femur_fracture.onnx` is **v3** and intentionally tracked: 38,138,284 bytes,
+  `6fad2537…fe26e0`, with `femur_fracture.calibration.json` alongside it. Verified byte-identical to
+  HEAD after the §8d revert.
+- `.gitignore` allowlists tracked ONNX files individually (`.gitignore:77-79`); the
+  `!backend/models/femur_region.onnx` line is in place, so v4 is **not ignored** — it simply has not
+  been `git add`ed yet, which is why `git status` lists it as untracked.
 
-Working tree, **not** committed: the v3 ONNX replaces the tracked v1 binary (38.1 MB),
-`backend/models/femur_fracture.calibration.json` (v3, untracked), the UI confidence changes, and
-these docs. The v1 model and its calibration are backed up in `.kaggle_staging/v1-output/`
-(gitignored) for an immediate revert.
+Working tree, **not** committed (the §8d two-model change): `ml_detector.py`, `xray_analyzer.py`,
+`config.py`, `main.py`, `SimView.jsx`, `backend/tests/region_classifier_check.py` (new), `.gitignore`,
+`ml/scripts/train_region_kaggle.py`, and these docs. `backend/outputs/e2e_assembly.glb` and
+`ml/notebooks/fracatlas_yolo11s_960_gpu.ipynb` also show as modified (the first is a test artefact).
 
 Other local, **not** committed: `.qoder/`, `assembly_d69d8ec686ea_intramedullary_nail.glb`,
-`count.js`, `list_raw.ps1`, extra `samples/` images, `yolo11n.pt`, `runs/`, the session `.mp4`.
+`count.js`, `list_raw.ps1`, `data.yaml` and `femurfix-5-class-region-training.log` in the repo root
+(stray Kaggle pull-downs, safe to delete), extra `samples/` images including `samples/best_v3.zip`
+(a raw PyTorch checkpoint, not a zip), `yolo11n.pt`, `runs/`, `weights/`, the session `.mp4`.
 Ignored directories: `backend/cases/`, `backend/uploads/`, `backend/outputs/*.glb`,
-`ml/data/images|labels`, `ml/runs/`, `.kaggle_staging/`.
+`ml/data/images|labels`, `ml/data/region/`, `ml/runs/`, `.kaggle_staging/`.
+
+v4 artifacts are preserved in `.kaggle_staging/v4-output/` (gitignored): `femur_region.onnx`,
+`best_region.pt`, `region_summary.json` (see the §8c metrics warning), `data.yaml`.
 
 Servers used during this session (Windows, Git Bash):
 
@@ -313,19 +322,29 @@ curl -s -o /dev/null -w "%{http_code}\n" -X POST "http://127.0.0.1:8000/api/case
   -H "Content-Type: application/json" -d '{"implant_id":"intramedullary_nail","audience":"surgeon"}'
 ```
 
-Browser: open `http://127.0.0.1:5173`, accept the disclaimer, upload `samples/1.jpg`, wait for
+Browser: open `http://localhost:5173` (Vite binds IPv6 only on this machine — `127.0.0.1:5173` gets
+no response), accept the disclaimer, upload `samples/1.jpg`, wait for
 Fracture Morphology. Expected: amber weak-signal banner (raw 15%, ≈50% calibrated), no implant
-cards, no Surgical Simulation section. Then repeat with `samples/2.jpg`: Fracture Probability 63%
-(score 21%), implant cards, and assemble produces the reduction animation.
+cards, no Surgical Simulation section, and a *view context* line naming the zone the anatomical-zone
+model reads the film as. Then repeat with `samples/2.jpg`: Fracture Probability 63% (score 21%),
+implant cards, a region row whose sub-label says which model assigned it, and assemble produces the
+reduction animation.
 
 Model sanity checks:
 
 ```bash
-python backend/tests/onnx_detector_check.py --model backend/models/femur_fracture.onnx
-python backend/tests/eval_onnx_test_split.py --split test
-python backend/tests/sample_baseline.py   # the 9 user uploads; deployed v3 baseline 5/9
+python backend/tests/onnx_detector_check.py --model backend/models/femur_fracture.onnx   # 1 class, [1,5,18900]
+python backend/tests/onnx_detector_check.py --model backend/models/femur_region.onnx     # 5 classes, [1,9,18900]
+python backend/tests/eval_onnx_test_split.py --split test   # v3 benchmark: image P 0.812 / R 0.639
+python backend/tests/sample_baseline.py   # the 9 user uploads; deployed v3 baseline 5/9, cal= non-null
+python backend/tests/region_classifier_check.py   # per-sample zone + region_source from the real analyzer
 python backend/tests/e2e_check.py   # full pipeline smoke test
 ```
+
+`region_classifier_check.py` is the guard for the two-model design: it prints the zone the classifier
+picked and where the region label came from (`zone_model` / `geometric` / `user_override`). Expect
+`2.jpg` detected again (it was 0.000 under the v4-as-replacement swap) and its zone not forced to
+`proximal`.
 
 The previous session's scratch scripts and screenshots lived in
 `C:\Users\mansi\AppData\Local\Temp\femurfix-e2e` and `C:\tmp\femurfix-e2e\shots`; they are
@@ -345,11 +364,19 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
   probabilities above ~0.8 are indicative, not definitive.
 - No-fracture cases still show the estimated 3D preview volume. That is intentional (it is a generic
   reconstruction, not a diagnosis).
-- Region labels are geometric (box position against the silhouette), not learned. A hip case can
-  therefore be labeled `shaft`.
+- Region labels are **not learned for the fracture itself**. The zone classifier only names where a
+  already-detected fracture sits; when it has no confident box, the region falls back to geometry
+  (box position against the silhouette), so a hip case can still be labeled `shaft`. The UI's
+  region sub-label and `region_source` field say which path was used — trust those, not the label.
+- The zone classifier (`femur_region.onnx`) has **no calibration of its own**, and must never be
+  presented as a fracture probability. Its scores only gate which zone wins; the v3 detector plus
+  `femur_fracture.calibration.json` owns every probability in the UI.
+- Zone coverage is hip-only (`neck` / `intertrochanteric` / `subtrochanteric` — the Roboflow source
+  has no `femoral_shaft` or `distal_femur` classes), so shaft and distal films resolve geometrically
+  by design. Roadmap A2 (MAISI→DRR synthetic hips) is the route to real coverage.
+- Two ONNX models are now loaded once per process. Restart uvicorn after changing either model,
+  `config.py`, or the detector/analyzer services.
 - Old case results do not retroactively gain the safeguards; re-upload/re-analyze.
-- `Local ONNX detector` is loaded once per process; restart uvicorn after changing the model or
-  `config.py`.
 
 ---
 
@@ -390,7 +417,7 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
 
 ---
 
-## 8c. v4 region training on Kaggle (2026-10-29) — **resume point**
+## 8c. v4 region training on Kaggle (2026-10-29)
 
 **Datasets (private, user `birwatkar`):**
 
@@ -437,28 +464,108 @@ early-stopped ~22 min total, test split (81 images / 102 boxes):
 This beats v3 (test mAP50 0.404) and is the first model that names the fracture region directly.
 
 **Run v7 (`2026-10-29 ~03:30` local) is the clean re-run** with the metrics fix + ONNX export +
-`best_region.pt` copy. Expected artifacts in the kernel Output:
+`best_region.pt` copy. **Completed Successfully** on GPU T4×2; artifacts pulled to `D:\region_out\`
+and preserved in `.kaggle_staging/v4-output/` (gitignored):
 
-- `femur_region.onnx` (960×960, 5 classes)
-- `region_summary.json`
-- `best_region.pt`
+- `femur_region.onnx` — 38,144,548 bytes, SHA-256
+  `acbb73c031e28b7147df1a511ebb0478dbe6d16de4bbc32cc38126fc7cf6f9a8`, input `[1,3,960,960]`,
+  output `[1,9,18900]`, names `femoral_neck / intertrochanteric / subtrochanteric / femoral_shaft /
+  distal_femur`
+- `best_region.pt` (19,248,154 bytes), `region_summary.json`, `data.yaml`, run log
 
-**To resume:**
+**v7 metrics correction.** `region_summary.json` is wrong and must not be quoted: the script read
+`metrics.box.maps`, which in Ultralytics 8.4 is the per-class **mAP@50-95** vector, and labelled it
+`per_class_ap50`. `ml/scripts/train_region_kaggle.py` now reads `box.maps50` into
+`per_class.<cls>.AP50`. True numbers from the run log:
 
-```powershell
-kaggle kernels status birwatkar/femurfix-5-class-region-training
-kaggle kernels output birwatkar/femurfix-5-class-region-training -p D:\region_out
-```
+| Split | Class | Imgs | Boxes | P | R | mAP50 | mAP50-95 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| val (68 img) | all | 68 | 81 | 0.583 | 0.525 | **0.546** | 0.276 |
+| val | femoral_neck | 12 | 24 | 0.637 | 0.750 | 0.750 | 0.441 |
+| val | intertrochanteric | 18 | 45 | 0.447 | 0.576 | 0.497 | 0.239 |
+| val | subtrochanteric | 5 | 12 | 0.666 | 0.250 | 0.391 | 0.147 |
+| **test** (81 img) | all | 81 | 102 | 0.437 | 0.575 | **0.480** | 0.248 |
+| test | femoral_neck | 12 | 24 | 0.473 | 0.667 | **0.636** | 0.387 |
+| test | intertrochanteric | 22 | 55 | 0.332 | 0.655 | **0.424** | 0.183 |
+| test | subtrochanteric | 9 | 23 | 0.507 | 0.403 | **0.379** | 0.174 |
 
-Then, if the ONNX exists: copy it over `backend/models/femur_fracture.onnx`, delete
-`backend/models/femur_fracture.calibration.json` (hash-locked to v3), re-run
-`backend/tests/eval_onnx_test_split.py --split test` and `backend/tests/sample_baseline.py`
-(v3 reference: 5/9), then teach `xray_analyzer.py` to take the region label from the model's
-`_read_names` instead of the geometric fallback. Regenerate calibration before shipping.
+`femoral_shaft` / `distal_femur` are **unlabelled in this source** (proximal-only Roboflow export); the
+0.248 recorded for them in the JSON is the overall mAP50-95 echoed into empty slots, not a measurement.
+Training was deterministic enough that v7 reproduced v6's test table exactly.
 
-**Still pending from Phase 1:** the user's verdict on the 20 boxed spot-review images
-(`ml/data/region/spot_review/`); the Roboflow API key file was deleted — rotate the key in Roboflow
-settings.
+---
+
+## 8d. v4 is NOT a drop-in replacement — two-model design (2026-10-29)
+
+**What was tried.** v4 was copied over `backend/models/femur_fracture.onnx`, the v3 calibration was
+deleted, and `xray_analyzer.py` was changed to derive `region` from the model class.
+
+**Measured against the deployed benchmark (gate 0.15, `eval_onnx_test_split.py`):**
+
+| Metric | v3 (deployed) | v4 as replacement |
+| --- | --- | --- |
+| FracAtlas test image P / R | 0.812 / 0.639 | **0.256 / 0.180** |
+| FracAtlas test box P / R / F1 | 0.417 / 0.373 / 0.394 | **0.020 / 0.015 / 0.017** (1 of 67 boxes) |
+| Best test F1 threshold | 0.15 → image F1 0.715 | 0.30 → F1 **0.025** |
+| User samples | 5/9 | 3/9 |
+
+**Why — target convention, not a bad training run.** FracAtlas boxes delimit the **fracture line**
+(median 41 px at 640 input). Roboflow `proximal-femur-fracture` boxes delimit **anatomical zones**, so
+v4 emits large zone boxes that cannot match fracture-line GT. The consequence is visible on the user
+samples: v4 finds the hip films v3 missed (`images.jpg` → `intertrochanteric` 0.300 where v3 scored
+0.000) but loses every distal/shaft case (`2.jpg` → 0.000 where v3 scored 0.206). Reverting was the
+only correct move; the 0.480 figure is real but describes a different task.
+
+**Shipped design.** v3 stays authoritative for *whether* and *where*; v4 labels the anatomical zone.
+
+- `backend/models/femur_fracture.onnx` — reverted to v3 (`6fad2537…`, calibration live again).
+- `backend/models/femur_region.onnx` — v4, tracked in git via a `.gitignore` allowlist entry.
+- `config.py`: `REGION_ONNX_MODEL` / `USE_REGION_ONNX` / `REGION_ONNX_CONF` (default **0.10**).
+  `LOCAL_ONNX_CONF` stays 0.15 and the 0.95 calibration cap is untouched.
+- `ml_detector.py`: `OnnxFractureDetector(bind_calibration=False)` (it already handled N classes —
+  `_read_names`, `channels = 4 + len(names)`); `get_region_classifier()` singleton returns `None`
+  when the file is missing, refuses a binary model, so the app degrades to the old behaviour;
+  `classify_region(image, fracture_box)` picks the zone overlapping the fracture box (containment of
+  the box centre, else IoU — zone boxes are far larger than fracture boxes so plain IoU under-selects);
+  `classify_view(image)` returns the top zone over the whole frame; `detect()` now also returns `boxes`.
+- `xray_analyzer.py`: region precedence is detector class → zone model above gate → geometric ratio.
+  `_map_class_to_region` returns `""` for the binary `fracture` class instead of forcing `proximal`.
+  The fracture payload gained `region_source` (`model` | `zone_model` | `geometric` | `unresolved`),
+  `region_score`, `anchor_ratio`, and `view_hint` on negatives. `main.py` sets `user_override`.
+- The zone model never influences `detected`, recommendations, or the assemble 409 guard.
+
+**Verified 2026-10-29** (`backend/tests/region_classifier_check.py`, both models loaded):
+| Sample | detected | calibrated | region | via |
+| --- | --- | --- | --- | --- |
+| `2.jpg` | ✓ | 0.632 | shaft | geometric (zone abstains — distal film) |
+| `6d91…big_gallery.jpg` | ✓ | 0.632 | **proximal** | **zone_model** (`subtrochanteric`) |
+| `images (2).jpg` | ✓ | 0.632 | shaft | geometric |
+| both `xray-image-show-close-fracture…webp` | ✓ | 0.667 | shaft | geometric |
+| `1.jpg` | ✗ (weak) | — | — | view_hint **intertrochanteric @0.42** |
+| `images.jpg` | ✗ | — | — | view_hint **intertrochanteric @0.28** |
+
+Baseline restored to **5/9 with calibration live**. `e2e_check.py` passes; `npm run build` passes.
+UI verified in headless Chrome (playwright, `channel="chrome"`) against the live servers:
+
+- zone case → `Proximal (AO/OTA 31)` + `zone: subtrochanteric · 23% · via anatomical-zone model`
+- geometric case → `Shaft (AO/OTA 32)` + `via silhouette geometry` (provenance was previously hidden
+  whenever no zone class existed — the sub-label is now gated on `region_source`, not on the class)
+- negative case → `Not determined by model` + `film reads as intertrochanteric (42%) — view context
+  only`, and the weak-signal banner carries the same sentence **once** (hoisted into one `viewContext`
+  fragment; the duplicate `weak_signal.view_hint` string was removed from the payload so `view_hint`
+  is single-sourced as `{class_name, score}`)
+- **Pattern/region contradiction fixed.** The heuristic writes its own region word into `pattern`, so a
+  zone-model override produced "region: proximal" next to "oblique **shaft** fracture". `_fracture_from_detection`
+  now rewrites that word to the final region; verified → `Model-detected oblique proximal fracture`.
+- `capitalize` on the parent does not override `normal-case` on the sub-label (rendered lowercase "via").
+
+UI: the Region row now shows `zone: <class> · <score>% · via <source>`, the Region-review tooltip
+names the actual source, and a `view_hint` appears on negatives as view context only.
+
+**Open.** Four of five detections still resolve geometrically — the zone model abstains on distal/shaft
+films because it has no such class. Genuine `femoral_shaft`/`distal_femur` coverage is roadmap **A2**
+(MAISI→DRR synthetic hips), not a re-run of this dataset. The zone model has no calibration of its own;
+its scores are displayed as raw detector scores and must never be presented as probabilities.
 
 ---
 
@@ -469,13 +576,22 @@ settings.
    clinical review of `ml/data/region/review_manifest.csv`, then GPU fine-tune via
    `ml/notebooks/region_yolo_finetune_gpu.ipynb` (attach the dataset + a checkpoint on Kaggle).
    **Update 2026-10-29:** training ran through the CLI kernel instead (see §8c). Test mAP50 0.480.
-   Remaining: collect v7 artifacts, swap the ONNX into the backend, recalibrate, extend
-   `xray_analyzer.py` for the 5-class output.
-2. **Refine the calibration tail.** v3 isotonic maps raw ≥0.402 to 1.0 from a sparse val block;
-   audit the support (`.kaggle_staging/calibration_report.py`) and, if needed, cap the tail at 0.95
-   or switch to Platt before calling the probability final.
+   The "collect v7 artifacts, swap the ONNX into the backend, recalibrate, extend `xray_analyzer.py`
+   for the 5-class output" plan that used to sit here is **rejected** — v4 as a replacement is a
+   severe regression (§8d). v4 ships instead as the secondary zone classifier, and it is not
+   recalibrated because it is not a fracture detector. Next real work on this axis is A2 (synthetic
+   hip data) so the zone model gains `femoral_shaft` / `distal_femur` coverage.
+2. **~~Refine the calibration tail~~ DONE** — v3 isotonic mapped raw ≥0.402 to 1.0 from a sparse val
+   block; the audit (`.kaggle_staging/calibration_report.py`) refuted it (a test negative scored
+   0.623) and the tail is now capped at 0.95. Platt remains an option if the calibrator is rebuilt.
 3. **Re-test the 9 user samples** after any model change; track detects and confidences.
    *v3 baseline 5/9 (calibrated 63–67%); v1 was 1/9, v2 2/9.*
 4. **Track external specificity.** v3 flags 19% of OrthoFrac non-fracture femur films at 0.15;
-   re-check this when licensed boxes allow a region-aware model, and keep the calibrated-probability
+   re-check this when the zone model has broader coverage, and keep the calibrated-probability
    display rather than a bare "detected" claim.
+5. **Commit the two-model work.** It is verified but uncommitted, and `backend/models/femur_region.onnx`
+   (38 MB) still needs `git add` — §4 lists the files. Check §7 before pushing: three local-only
+   commits are already ahead of `bc5d66c`.
+6. **Finish A3.** The zone classifier names hip zones on detected fractures today; it does not yet
+   feed implant selection or the surgical plan, and it has no shaft/distal classes. A2 is the
+   prerequisite for the latter.

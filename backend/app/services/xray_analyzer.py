@@ -15,8 +15,14 @@ import numpy as np
 from scipy import ndimage
 from skimage import filters, measure, morphology
 
-from ..utils.config import FRACTURE_REGIONS, HF_SPACE_ID, HF_TOKEN, LOCAL_ONNX_CONF, LOCAL_ONNX_WEAK_CONF
-from .ml_detector import get_detector
+from ..utils.config import (
+    FRACTURE_REGIONS,
+    HF_SPACE_ID,
+    HF_TOKEN,
+    LOCAL_ONNX_CONF,
+    LOCAL_ONNX_WEAK_CONF,
+)
+from .ml_detector import get_detector, get_region_classifier
 
 
 class AnalysisError(RuntimeError):
@@ -76,10 +82,16 @@ class XRayAnalyzer:
         if local_detection is not None:
             if local_detection.get("detected"):
                 fracture = self._fracture_from_detection(
-                    local_detection, bone_mask, silhouette, image.shape[0]
+                    local_detection,
+                    bone_mask,
+                    silhouette,
+                    image.shape[0],
+                    image=image,
                 )
             else:
-                fracture = self._no_fracture_from_detection(local_detection)
+                fracture = self._no_fracture_from_detection(
+                    local_detection, image=image, silhouette=silhouette
+                )
         elif remote and remote.get("fracture"):
             fracture = self._normalise_fracture(remote["fracture"], silhouette)
             fracture["notes"].append("Fracture model: Hugging Face ZeroGPU Space")
@@ -249,6 +261,7 @@ class XRayAnalyzer:
         mask: np.ndarray,
         silhouette: Dict[str, Any],
         image_height: int,
+        image: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         box = [float(v) for v in (detection.get("bbox_norm") or [0.15, 0.4, 0.85, 0.6])]
         box = [float(np.clip(v, 0.0, 1.0)) for v in box]
@@ -258,11 +271,44 @@ class XRayAnalyzer:
         anchor_ratio = float(np.clip((center_y_px - top) / span, 0.0, 1.0))
 
         fracture = self._heuristic_fracture(mask, silhouette, anchor_ratio=anchor_ratio)
-        region = self._region_from_ratio(anchor_ratio)
+
+        # A jointly-trained fracture+zone model would name the region itself; the
+        # deployed binary detector reports "fracture", which maps to "".
+        class_name = detection.get("class_name", "fracture")
+        region = self._map_class_to_region(class_name)
+        region_source = "model" if region else "geometric"
+        region_score = None
+        if not region:
+            region = self._region_from_ratio(anchor_ratio)
         detector_confidence = float(detection.get("confidence") or 0.0)
         calibrated = detection.get("calibrated_confidence")
         confidence = float(calibrated) if calibrated is not None else detector_confidence
         model_name = detection.get("model") or "YOLO detector"
+
+        zone = None
+        if region_source == "geometric" and image is not None:
+            classifier = get_region_classifier()
+            if classifier is not None:
+                try:
+                    zone = classifier.classify_region(image, box)
+                except Exception as exc:  # never fail the diagnosis path on a label
+                    print(f"[region] zone classification failed: {exc}")
+                    zone = None
+                if zone:
+                    mapped = self._map_class_to_region(zone["class_name"])
+                    if mapped:
+                        region = mapped
+                        region_source = "zone_model"
+                        region_score = zone["score"]
+                        class_name = zone["class_name"]
+        # The heuristic wrote its region word into the pattern before the zone model
+        # had a say; a "proximal" region must not be described as a shaft fracture.
+        heuristic_region = self._region_from_ratio(anchor_ratio)
+        if region != heuristic_region:
+            pattern = fracture.get("pattern", "")
+            if heuristic_region in pattern:
+                fracture["pattern"] = pattern.replace(heuristic_region, region)
+
         if calibrated is not None:
             confidence_note = (
                 f"Fracture detected by local ONNX {model_name} "
@@ -288,21 +334,59 @@ class XRayAnalyzer:
                     else "raw detector score"
                 ),
                 "bbox_norm": box,
+                "model_class": class_name,
+                "region_source": region_source,
+                "region_score": region_score,
+                "anchor_ratio": round(anchor_ratio, 3),
             }
         )
+        if region_source == "zone_model":
+            region_note = (
+                f"Region '{region}' named by the anatomical-zone model "
+                f"({class_name}, score {region_score:.0%}); it labels location only and "
+                "did not decide whether a fracture exists."
+            )
+        elif region_source == "model":
+            region_note = f"Region taken from the detector's own class: {class_name}."
+        else:
+            region_note = (
+                "Region estimated geometrically from the fracture position on the "
+                "silhouette; the zone model did not return a confident label."
+            )
         fracture["notes"] = [
             confidence_note,
             "Fracture-plane geometry is estimated from the radiograph silhouette.",
-            "Region is assigned geometrically; FracAtlas has no hip-region labels.",
+            region_note,
         ]
         return fracture
 
-    def _no_fracture_from_detection(self, detection: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    @staticmethod
+    def _map_class_to_region(class_name: str) -> str:
+        """Map the 5-class zone model to the 3-region UI taxonomy.
+
+        Returns "" for the binary fracture model's `fracture` class or anything unknown,
+        so the caller keeps its geometric answer instead of defaulting to proximal.
+        """
+        if class_name in {"femoral_neck", "intertrochanteric", "subtrochanteric"}:
+            return "proximal"
+        if class_name == "femoral_shaft":
+            return "shaft"
+        if class_name == "distal_femur":
+            return "distal"
+        return ""
+
+    def _no_fracture_from_detection(
+        self,
+        detection: Optional[Dict[str, Any]] = None,
+        image: Optional[np.ndarray] = None,
+        silhouette: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         region = "shaft"
         model_name = (detection or {}).get("model") or "YOLO detector"
         fracture = {
             "detected": False,
             "region": region,
+            "region_source": "unresolved",
             "ao_family": FRACTURE_REGIONS.get(region),
             "pattern": "No fracture detected by the local ONNX model",
             "confidence": 0.0,
@@ -312,10 +396,37 @@ class XRayAnalyzer:
             "angulation_deg": 0.0,
             "shortening_mm": 0.0,
             "notes": [
-                f"Fracture model: local ONNX {model_name} (FracAtlas binary pretraining).",
+                f"Fracture model: local ONNX {model_name} (binary fracture detector).",
                 "A negative prediction is not evidence of an intact femur.",
             ],
         }
+        view_hint = None
+        classifier = get_region_classifier()
+        if classifier is not None and image is not None:
+            try:
+                if silhouette:
+                    box = [
+                        float(silhouette["left_x"]) / float(silhouette["width_px"]),
+                        0.0,
+                        float(silhouette["right_x"]) / float(silhouette["width_px"]),
+                        1.0,
+                    ]
+                    zone = classifier.classify_region(image, box)
+                else:
+                    zone = classifier.classify_view(image)
+            except Exception as exc:
+                print(f"[region] view classification failed: {exc}")
+                zone = None
+            if zone:
+                view_hint = zone
+                fracture["view_hint"] = {
+                    "class_name": zone["class_name"],
+                    "score": zone["score"],
+                }
+                fracture["notes"].append(
+                    f"Anatomical-zone model reads this film as {zone['class_name']} "
+                    f"(score {zone['score']:.0%}) — view context only, not a diagnosis."
+                )
         raw_top = float((detection or {}).get("raw_top") or 0.0)
         if raw_top >= LOCAL_ONNX_WEAK_CONF:
             above = [s for s in (detection or {}).get("raw_scores", []) if s >= LOCAL_ONNX_WEAK_CONF]

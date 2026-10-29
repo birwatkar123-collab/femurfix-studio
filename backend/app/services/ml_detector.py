@@ -5,7 +5,7 @@ import ast
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 from PIL import Image
@@ -15,7 +15,10 @@ from ..utils.config import (
     LOCAL_ONNX_CONF,
     LOCAL_ONNX_IOU,
     LOCAL_ONNX_MODEL,
+    REGION_ONNX_CONF,
+    REGION_ONNX_MODEL,
     USE_LOCAL_ONNX,
+    USE_REGION_ONNX,
 )
 
 
@@ -29,6 +32,7 @@ class OnnxFractureDetector:
         model_path: Optional[Path] = None,
         conf: float = LOCAL_ONNX_CONF,
         iou: float = LOCAL_ONNX_IOU,
+        bind_calibration: bool = True,
     ) -> None:
         try:
             import onnxruntime as ort
@@ -57,7 +61,7 @@ class OnnxFractureDetector:
         self.names = self._read_names()
         self.conf = float(conf)
         self.iou = float(iou)
-        self.calibration = self._load_calibration()
+        self.calibration = self._load_calibration() if bind_calibration else None
 
     def _read_names(self) -> Dict[int, str]:
         raw = self.session.get_modelmeta().custom_metadata_map.get("names", "")
@@ -147,6 +151,7 @@ class OnnxFractureDetector:
                 "raw_scores": raw_scores,
                 "bbox_norm": None,
                 "num_detections": 0,
+                "boxes": [],
                 "calibration": self._calibration_meta(),
                 "model": self.path.name,
             }
@@ -166,6 +171,7 @@ class OnnxFractureDetector:
             "box_pixels": [round(float(v), 1) for v in best["bbox_pixels"]],
             "num_detections": len(boxes),
             "class_name": self.names.get(int(best["class_id"]), "fracture"),
+            "boxes": boxes,
             "calibration": self._calibration_meta(),
             "model": self.path.name,
         }
@@ -255,6 +261,66 @@ class OnnxFractureDetector:
             )
         return results
 
+    def classify_region(
+        self,
+        image: np.ndarray,
+        fracture_box_norm: Sequence[float],
+    ) -> Optional[Dict[str, Any]]:
+        """Name the anatomical zone containing a fracture box found by another model.
+
+        The zone model was trained on anatomical-zone boxes, not fracture lines, so its
+        output is only consulted to label a location someone else has already detected.
+        """
+        boxes = self.detect(image).get("boxes") or []
+        fx1, fy1, fx2, fy2 = (float(v) for v in fracture_box_norm)
+        fracture_area = max(1e-9, (fx2 - fx1) * (fy2 - fy1))
+        center_x, center_y = (fx1 + fx2) / 2.0, (fy1 + fy2) / 2.0
+
+        candidates = []
+        for box in boxes:
+            x1, y1, x2, y2 = box["bbox_norm"]
+            if x1 <= center_x <= x2 and y1 <= center_y <= y2:
+                contains = True
+            else:
+                contains = False
+            inter_x = max(0.0, min(fx2, x2) - max(fx1, x1))
+            inter_y = max(0.0, min(fy2, y2) - max(fy1, y1))
+            inter = inter_x * inter_y
+            union = max(1e-9, (x2 - x1) * (y2 - y1) + fracture_area - inter)
+            overlap = inter / fracture_area if contains else inter / union
+            if not contains and inter <= 0.0:
+                continue
+            candidates.append(
+                {
+                    "class_name": self.names.get(int(box["class_id"]), str(box["class_id"])),
+                    "score": round(float(box["confidence"]), 4),
+                    "bbox_norm": [round(float(v), 4) for v in box["bbox_norm"]],
+                    "overlap": round(float(overlap), 4),
+                    "contains_center": contains,
+                }
+            )
+
+        candidates.sort(key=lambda c: (-c["overlap"], -c["score"]))
+        if not candidates:
+            return None
+        top = candidates[0]
+        if top["score"] < self.conf:
+            return None
+        return top
+
+    def classify_view(self, image: np.ndarray) -> Optional[Dict[str, Any]]:
+        """Highest-scoring zone over the whole frame — view context, not a diagnosis."""
+        boxes = self.detect(image).get("boxes") or []
+        kept = [b for b in boxes if float(b["confidence"]) >= self.conf]
+        if not kept:
+            return None
+        best = max(kept, key=lambda b: float(b["confidence"]))
+        return {
+            "class_name": self.names.get(int(best["class_id"]), str(best["class_id"])),
+            "score": round(float(best["confidence"]), 4),
+            "bbox_norm": [round(float(v), 4) for v in best["bbox_norm"]],
+        }
+
     def _nms(self, boxes: np.ndarray, scores: np.ndarray) -> List[int]:
         x1, y1, x2, y2 = boxes.T
         areas = np.maximum(x2 - x1, 0.0) * np.maximum(y2 - y1, 0.0)
@@ -298,3 +364,39 @@ def get_detector() -> Optional[OnnxFractureDetector]:
         return None
     print(f"[detector] loaded {_DETECTOR.path.name} at {_DETECTOR.imgsz}px")
     return _DETECTOR
+
+
+_REGION_CLASSIFIER: Optional[OnnxFractureDetector] = None
+_REGION_LOAD_ERROR: Optional[str] = None
+
+
+def get_region_classifier() -> Optional[OnnxFractureDetector]:
+    """Zone model singleton; None when unavailable, so region falls back to geometry."""
+    global _REGION_CLASSIFIER, _REGION_LOAD_ERROR
+    if not USE_REGION_ONNX:
+        return None
+    if _REGION_CLASSIFIER is not None:
+        return _REGION_CLASSIFIER
+    if _REGION_LOAD_ERROR is not None:
+        return None
+    if not REGION_ONNX_MODEL.is_file():
+        _REGION_LOAD_ERROR = f"not found: {REGION_ONNX_MODEL}"
+        print("[region] zone model absent; region stays geometric")
+        return None
+    try:
+        _REGION_CLASSIFIER = OnnxFractureDetector(
+            REGION_ONNX_MODEL, conf=REGION_ONNX_CONF, bind_calibration=False
+        )
+    except DetectorUnavailable as exc:
+        _REGION_LOAD_ERROR = str(exc)
+        print(f"[region] zone model disabled: {exc}")
+        return None
+    if set(_REGION_CLASSIFIER.names.values()) == {"fracture"}:
+        _REGION_LOAD_ERROR = "model is a binary fracture detector, not a zone model"
+        print("[region] refusing to use a binary fracture model for zone labelling")
+        return None
+    print(
+        f"[region] loaded {_REGION_CLASSIFIER.path.name} at {_REGION_CLASSIFIER.imgsz}px "
+        f"(gate {REGION_ONNX_CONF})"
+    )
+    return _REGION_CLASSIFIER

@@ -71,6 +71,15 @@ LOCAL_ONNX_CALIBRATION = Path(
     )
 ).expanduser()
 
+# Secondary anatomical-zone model. It answers *which part of the femur* a detected
+# fracture sits in; it is never used to decide whether a fracture exists, because it
+# was trained on anatomical-zone boxes rather than fracture-line boxes.
+REGION_ONNX_MODEL = Path(
+    os.environ.get("FRACTURE_REGION_ONNX_MODEL", str(MODELS_DIR / "femur_region.onnx"))
+).expanduser()
+USE_REGION_ONNX = os.environ.get("USE_REGION_ONNX", "1").strip().lower() not in {"0", "false", "no"}
+REGION_ONNX_CONF = float(os.environ.get("REGION_ONNX_CONF", "0.10"))
+
 SUPPORTED_DEVICE_FAMILIES: List[str] = [
     "cannulated_screws",
     "dynamic_hip_screw",

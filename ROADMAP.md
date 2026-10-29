@@ -21,12 +21,19 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
 - [x] **A1 region dataset + v4 training** — Roboflow v27 (756 imgs) converted to boxes and validated:
   `ml/data/region/` = 607/68/81 splits, 371 positives (femoral_neck 289 / intertrochanteric 467 /
   subtrochanteric 136) + 385 negatives. Uploaded to Kaggle and trained from the v3 backbone via the
-  CLI kernel `birwatkar/femurfix-5-class-region-training`: **test mAP50 0.480 / mAP50-95 0.248**
-  (neck AP50 0.636, intertrochanteric 0.424, subtrochanteric 0.379) — up from v3's 0.404. Details
-  and resume steps in `PROGRESS.md` §8c.
-  Remaining: download `femur_region.onnx`, swap into `backend/models/`, recalibrate, extend
-  `xray_analyzer.py` for 5-class output, and the user's verdict on the 20 spot-review images.
-  (Roboflow key file deleted — rotate it in settings.)
+  CLI kernel `birwatkar/femurfix-5-class-region-training` (run v7 Successful): **test mAP50 0.480 /
+  mAP50-95 0.248** (neck AP50 0.636, intertrochanteric 0.424, subtrochanteric 0.379).
+  **v4 is not a replacement for v3.** Swapping it into `backend/models/femur_fracture.onnx` collapsed
+  the deployed benchmark (image P/R 0.812/0.639 → 0.256/0.180, box F1 0.394 → 0.017, samples 5/9 → 3/9)
+  because FracAtlas boxes delimit fracture lines while this source delimits anatomical zones. It now
+  ships as the **secondary zone classifier** (`backend/models/femur_region.onnx`), which is what
+  actually delivers **A3**; v3 was reverted and re-verified. Full analysis in `PROGRESS.md` §8d.
+  Remaining: user's verdict on the 20 spot-review images; rotate the Roboflow key (file deleted).
+- [x] **A3 learned region classes (partial)** — `region_source` precedence is detector class →
+  zone model above `REGION_ONNX_CONF` (0.10) → geometric ratio, surfaced in the fracture payload and
+  the UI. Only 3 of 5 classes exist in the source: `femoral_shaft`/`distal_femur` are unlabelled, so
+  shaft/distal films still resolve geometrically. Closing that gap needs **A2** (synthetic hips), not a
+  re-run of this dataset.
 
 ---
 
@@ -54,7 +61,7 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
 | --- | --- | --- | --- | --- |
 | A1 | Region-aware v4 detector on Roboflow `proximal-femur-fracture` (756 imgs, boxes, CC BY 4.0) | Existing plan (§ nums in PROGRESS.md) | Replace geometric region labeling | Low |
 | A2 | Synthetic hip X-ray engine: MAISI/NV-Generate hip CT volumes + paired masks → DRR projection → fracture-line injection → YOLO augmentation for hip class | NV-Generate/MAISI (HF) | Augment training data only; real val/test untouched | Med-High |
-| A3 | Learned region classes: `femoral_neck / intertrochanteric / subtrochanteric / shaft / distal` per ML_TRAINING_PLAN.md | Own plan | Replace silhouette-ratio classification | Medium |
+| A3 | Learned region classes: `femoral_neck / intertrochanteric / subtrochanteric / shaft / distal` per ML_TRAINING_PLAN.md | Own plan | **Partial (2026-10-29):** zone model ships as a second classifier; shaft/distal still geometric — source has no such labels | Medium |
 | A4 | Two-reader confidence gate: local YOLO + open reasoning VLM second read; display agreement | NV-Reason-CT pattern; MedGemma/Merlin baselines | Add optional cloud mode; local ONNX stays primary | High |
 | A5 | SSL pretraining on unlabeled X-rays (SegResNetDS + cuboid masked-volume reconstruction) | NSW telestroke talk | Improves recipe | Medium |
 | A6 | Grounded explanation UI: box overlay + calibrated probability + reader agreement | groundable-CoT principle | Modify SimView | Low |
