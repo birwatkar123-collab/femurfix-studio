@@ -80,3 +80,8 @@ runs/
 
 # Kaggle CLI staging
 .kaggle_staging/
+
+# Regenerable miss-diagnosis outputs (backend/tests/miss_diagnosis.py).
+# sample_truth.json and miss_analysis.md ARE tracked — they are the finding.
+ml/reports/miss_analysis.json
+ml/reports/miss_boxes/

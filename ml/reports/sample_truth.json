@@ -1,0 +1,80 @@
+{
+  "_about": "Provisional, NON-CLINICAL adjudication of the demo upload set, read from the images in samples/ and the detector overlays in ml/reports/miss_boxes/. Its only purpose is to stop counting a forearm film and a normal hip as femur-fracture misses. A clinician must confirm every value here before any number derived from it is quoted as accuracy.",
+  "_fields": {
+    "in_scope": "true = the film shows the femur; false = it does not (excluded from recall); null = this reader could not tell",
+    "fracture": "true / false / null (null = indeterminate, excluded until a clinical read)",
+    "site": "where the pathology is, so a below-gate candidate can be checked against it"
+  },
+  "1.jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": true,
+    "site": "femoral shaft, mid-third, transverse with displacement",
+    "view": "AP proximal femur / hip",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "2.jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": true,
+    "site": "femoral shaft, distal third, displaced with a wedge fragment",
+    "view": "AP full femur including the hip",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "5.jpg": {
+    "in_scope": false,
+    "bone": "forearm (radius and ulna)",
+    "fracture": true,
+    "site": "both-bone shaft fracture",
+    "note": "Not a femur. The model's only candidate (0.018) is in the background, so abstaining here is correct behaviour for a femur-specialised detector.",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "6d91c93a6a565320a67ff78ad8b240_big_gallery.jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": true,
+    "site": "femoral shaft, mid-to-distal third, displaced with shortening",
+    "view": "AP full femur",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "images (1).jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": null,
+    "site": "femoral head-neck junction",
+    "note": "The head-neck junction looks abnormal but this reader cannot call it. Either way the model's best candidate (0.010) is in the bottom-right corner over soft tissue, i.e. it never looked at the hip.",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "images (2).jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": true,
+    "site": "proximal femoral shaft / subtrochanteric region",
+    "view": "lateral-ish proximal femur",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "images.jpg": {
+    "in_scope": true,
+    "bone": "femur",
+    "fracture": false,
+    "site": "AP pelvis / both hips",
+    "note": "No fracture line identified on non-clinical review; the 0.013 candidate sits over the intact head-neck junction. Needs a clinician to confirm it is a true negative.",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "xray-image-show-close-fracture-260nw-1311736178.webp": {
+    "in_scope": null,
+    "bone": "uncertain - reads as tibia/fibula, possibly distal femur",
+    "fracture": true,
+    "site": "distal third of the visualised long bone",
+    "note": "A stock photo. The detector fires strongly here (0.341). If this is a lower-leg film, that is a false positive on out-of-scope anatomy rather than a femur hit - which is exactly why the scope is marked unknown instead of assumed.",
+    "reviewed": "2026-10-29 non-clinical"
+  },
+  "xray-image-show-close-fracture-260nw-1311736178 (1).webp": {
+    "in_scope": null,
+    "bone": "uncertain - duplicate of the file above",
+    "fracture": true,
+    "site": "distal third of the visualised long bone",
+    "note": "Byte-identical content to xray-image-show-close-fracture-260nw-1311736178.webp, so it double-weights the same image in the 9-sample denominator.",
+    "reviewed": "2026-10-29 non-clinical"
+  }
+}

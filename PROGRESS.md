@@ -1,7 +1,7 @@
 # Progress & Handoff
 
-**Last updated:** 2026-10-29 (two-model zone classifier shipped and pushed; Kaggle key expired
-server-side with no replacement installed yet — see §8d and §7)
+**Last updated:** 2026-10-29 (Phase 2 opened; the detector-recall premise was measured and corrected —
+see §8e. Kaggle key still expired server-side with no replacement installed — §7, §8d)
 **Branch:** `main`, pushed — `origin/main` == `HEAD` as of 2026-10-29, so a fresh clone has both ONNX
 models and the two-model path needs no setup.
 **Purpose:** durable state for whoever picks this up next. Working context that only existed in a
@@ -13,7 +13,9 @@ chat session is recorded here.
 
 FemurFix Studio runs end to end: X-ray upload → fracture detection → region classification →
 estimated 3D reconstruction (GLB) → ranked fixation constructs → assembly + reduction animation.
-The local detector is a **research prototype** and its sensitivity is the main open problem.
+The local detector is a **research prototype**. Its sensitivity is the main open problem, though §8e
+sharpened that: on the adjudicated sample set it misses nothing outright — one true fracture sits
+0.002 under the decision gate.
 
 | Area | State |
 | --- | --- |
@@ -25,6 +27,7 @@ The local detector is a **research prototype** and its sensitivity is the main o
 | Region-labeled model (v4) | **Not a drop-in replacement** (see §8c). Ships as the secondary **zone classifier** at `backend/models/femur_region.onnx`; v3 remains the fracture detector |
 | Two-model design (plan `distant-fjord-trout`) | **Complete** — all five steps plus the verification list implemented, browser-checked, committed (`2c8d338`) and pushed |
 | Kaggle training access | **Blocked 2026-10-29** — the API key on this machine is invalid server-side and no replacement is installed yet, so kernels cannot be pushed (§7, §9.5) |
+| Phase 2 (plan `distant-fjord-trout`) | **Started 2026-10-29** — T1.1 miss diagnosis done (§8e). Two parallel tracks: detector decision threshold, and A2 synthetic zones from **real CT → CPU DRR** (MAISI dropped on VRAM grounds, A5 SSL dropped) |
 
 ### Deployed model facts (v3 since 2026-10-26)
 
@@ -76,6 +79,11 @@ at 0.148, just under the gate, and now renders the weak-signal banner with a ≈
 probability. The two proximal films (`images.jpg`, `images (1).jpg`) and the forearm film `5.jpg`
 (human label may be forearm; the app is femur-only) are still missed. Calibrated probabilities for
 the five detections are 63–67%, not 90%.
+
+> **Corrected 2026-10-29 (§8e).** `5/9` counts a forearm film, a normal hip and two copies of one
+> stock photo as misses. Adjudicated in-scope femur positives score **3 hits, 1 below-gate,
+> 0 not-seen**. Keep quoting `5/9` for regression parity with v1/v2 — it is the same measurement —
+> but do not read it as recall.
 
 ---
 
@@ -292,6 +300,12 @@ artefact churn) and `ml/notebooks/fracatlas_yolo11s_960_gpu.ipynb` (editor re-sa
 unicode and a `kernelspec` block, no content change). Both are deliberately left out; either can be
 `git checkout`'d.
 
+New from §8e: `backend/tests/miss_diagnosis.py`, `ml/reports/sample_truth.json` (hand-edited — the
+adjudication source of truth) and the generated `ml/reports/miss_analysis.md` are **tracked**. The
+machine twin `miss_analysis.json` and the `miss_boxes/*.png` overlays are gitignored — regenerable by
+re-running the script, and they keep the tree clean when someone does. Edit `sample_truth.json`, never
+the markdown.
+
 Other local, **not** committed: `.qoder/`, `assembly_d69d8ec686ea_intramedullary_nail.glb`,
 `count.js`, `list_raw.ps1`, `data.yaml` and `femurfix-5-class-region-training.log` in the repo root
 (stray Kaggle pull-downs, safe to delete), extra `samples/` images including `samples/best_v3.zip`
@@ -343,9 +357,14 @@ python backend/tests/onnx_detector_check.py --model backend/models/femur_fractur
 python backend/tests/onnx_detector_check.py --model backend/models/femur_region.onnx     # 5 classes, [1,9,18900]
 python backend/tests/eval_onnx_test_split.py --split test   # v3 benchmark: image P 0.812 / R 0.639
 python backend/tests/sample_baseline.py   # the 9 user uploads; deployed v3 baseline 5/9, cal= non-null
+python backend/tests/miss_diagnosis.py    # why a sample did not fire; regenerates ml/reports/miss_analysis.md
 python backend/tests/region_classifier_check.py   # per-sample zone + region_source from the real analyzer
 python backend/tests/e2e_check.py   # full pipeline smoke test
 ```
+
+`sample_baseline.py`'s `5/9` is a **parity** number, not recall — see §8e. `miss_diagnosis.py` is the
+one that says which kind of miss each case is, and it regenerates `ml/reports/miss_analysis.md` from
+`ml/reports/sample_truth.json`; edit that JSON (never the markdown) to change an adjudication.
 
 `region_classifier_check.py` is the guard for the two-model design: it prints the zone the classifier
 picked and where the region label came from (`zone_model` / `geometric` / `user_override`). Expect
@@ -364,6 +383,11 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
   hip/proximal films remain weak, and external non-fracture false positives rose to 19% at 0.15.
   Box precision also fell (0.535 → 0.417), so a false positive can mislabel the region. The UI
   presents a calibrated probability and the weak-signal band instead of inventing certainty.
+- **`5/9` is a parity metric, not recall** (§8e). The sample set contains a forearm film, a normal hip
+  and two byte-identical stock photos, so the raw count understates the detector. The adjudicated
+  in-scope figure is 3 hits / 1 below-gate / 0 not-seen out of 4. `ml/reports/sample_truth.json` is
+  **non-clinical** — written by this tool to fix the denominator, not to label disease. A clinician
+  must confirm it before any accuracy claim is derived from it.
 - The calibration is fitted on the val split that early stopping also used; test reliability
   (Brier 0.101, top-bin 0.79 predicted vs 0.79 observed) is the honest number. The high tail is
   capped at 0.95 after the audit (uncapped 100% was refuted by a test negative scoring 0.623), so
@@ -379,7 +403,7 @@ temporary and may be gone. The reproducible evaluator is `backend/tests/eval_onn
   `femur_fracture.calibration.json` owns every probability in the UI.
 - Zone coverage is hip-only (`neck` / `intertrochanteric` / `subtrochanteric` — the Roboflow source
   has no `femoral_shaft` or `distal_femur` classes), so shaft and distal films resolve geometrically
-  by design. Roadmap A2 (MAISI→DRR synthetic hips) is the route to real coverage.
+  by design. Roadmap A2 (real CT → CPU DRR synthetic hips — see §8e) is the route to real coverage.
 - Two ONNX models are now loaded once per process. Restart uvicorn after changing either model,
   `config.py`, or the detector/analyzer services.
 - Old case results do not retroactively gain the safeguards; re-upload/re-analyze.
@@ -596,8 +620,65 @@ names the actual source, and a `view_hint` appears on negatives as view context 
 
 **Open.** Four of five detections still resolve geometrically — the zone model abstains on distal/shaft
 films because it has no such class. Genuine `femoral_shaft`/`distal_femur` coverage is roadmap **A2**
-(MAISI→DRR synthetic hips), not a re-run of this dataset. The zone model has no calibration of its own;
-its scores are displayed as raw detector scores and must never be presented as probabilities.
+(synthetic hips — **real CT → CPU DRR**, not MAISI; see §8e), not a re-run of this dataset. The zone
+model has no calibration of its own; its scores are displayed as raw detector scores and must never be
+presented as probabilities.
+
+---
+
+## 8e. Detector miss diagnosis — `5/9` was the wrong denominator (2026-10-29)
+
+Phase 2 opened with Track 1 premised on "`v3 misses a grossly displaced mid-shaft fracture in
+`1.jpg`, and synthetic zones cannot fix it". `backend/tests/miss_diagnosis.py` was written to test
+that premise before spending any GPU quota, by running production preprocessing/postprocessing at
+**probe conf 0.01** and reporting the whole score distribution rather than only the gated answer.
+It writes `ml/reports/miss_analysis.{md,json}` and an overlay PNG per non-hit to
+`ml/reports/miss_boxes/`, so a candidate's position can be *looked at* instead of inferred.
+
+Adjudication lives in `ml/reports/sample_truth.json` — **provisional and explicitly non-clinical**,
+whose only job is to stop counting a forearm film and a normal hip as femur misses. Fields:
+`in_scope` (true/false/null), `fracture` (true/false/null), `site`. A `null` in either yields status
+`indeterminate` and excludes the sample; the buckets are derived from `status` so the predicates
+cannot drift from the classifier.
+
+**Result — the premise is false as stated.**
+
+| bucket | count | samples |
+| --- | --- | --- |
+| hit | 3 | `2.jpg` 0.206, `6d91…` 0.286, `images (2).jpg` 0.179 |
+| **below-gate** | **1** | `1.jpg` **0.148** vs the 0.15 gate |
+| **not-seen** | **0** | — |
+| correct abstain | 1 | `images.jpg` 0.013 (normal hip) |
+| out of scope | 1 | `5.jpg` 0.018 — a **forearm** film |
+| indeterminate | 3 | both identical webps (0.341), `images (1).jpg` (0.010) |
+
+- **There is no shaft-coverage gap on this set.** Zero in-scope positives scored below 0.05. The
+  "detector can't see femur shafts" story was an artefact of a denominator that mixed in a forearm
+  film, a normal hip and two copies of one stock photo.
+- **`1.jpg` is a 0.002 shortfall, and the model was looking at the right place.** Both candidates
+  (0.148 and 0.133) sit on the displaced mid-shaft fracture in the overlay. Input scale is **1.115**,
+  i.e. the frame is *upsampled* into the network, so lost resolution cannot explain it — which is why
+  the ROI-crop / multi-scale experiment was cancelled before running it.
+- **The gate at raw 0.15 equals calibrated P = 0.500.** The app withheld a film it judged to be a
+  coin flip. That is the honesty layer working as designed at its worst case, and it is a UI-policy
+  fact worth keeping whatever happens to the number.
+- `images (1).jpg` is the one genuinely worrying case: a proximal-femur film whose best candidate
+  (0.010) is in the bottom-right corner over soft tissue — the model never looked at the hip. Whether
+  that film has a fracture needs a clinical read; it is `indeterminate`, not a miss.
+
+**Consequences for Phase 2 (plan `distant-fjord-trout`):** Track 1 reordered to
+T1.1 done → **T1.2 gate-cost sweep** → T1.3 ROI-crop demoted to a one-off check → T1.4 new
+fracture-line data. T1.2 is `eval_onnx_test_split.py --split test`, which *already* sweeps thresholds
+internally (it loads at conf 0.01), paired with the OrthoFrac external-negative count; it must answer
+in writing what gates 0.12 and 0.10 cost in image P/R, box F1 and false positives before
+`LOCAL_ONNX_CONF` moves at all. Track 2 (A2 synthetic zones) is unaffected — and MAISI is out:
+it needs ~58–60 GB VRAM at 512³ against Kaggle's 16 GB T4, so the volume source is **real public CT
+projected to DRR on CPU** (SimpleITK 2.5.6 / nibabel 5.4.2 already installed). **A5 (SSL) is dropped**
+— SegResNetDS + cuboid masked-volume reconstruction is a 3D-CT recipe whose encoder cannot initialise
+a 2D YOLO backbone.
+
+Also corrected: the config attribute is `config.LOCAL_ONNX_MODEL` (`backend/app/utils/config.py:57`);
+`FRACTURE_ONNX_MODEL` is the *env var* name, not the attribute.
 
 ---
 
@@ -617,7 +698,9 @@ its scores are displayed as raw detector scores and must never be presented as p
    block; the audit (`.kaggle_staging/calibration_report.py`) refuted it (a test negative scored
    0.623) and the tail is now capped at 0.95. Platt remains an option if the calibrator is rebuilt.
 3. **Re-test the 9 user samples** after any model change; track detects and confidences.
-   *v3 baseline 5/9 (calibrated 63–67%); v1 was 1/9, v2 2/9.*
+   *v3 baseline 5/9 (calibrated 63–67%); v1 was 1/9, v2 2/9.* Run `miss_diagnosis.py` alongside it —
+   §8e showed the raw count hides *which kind* of miss each case is, and it is the per-bucket numbers
+   (hit / below-gate / not-seen) that should be compared across models.
 4. **Track external specificity.** v3 flags 19% of OrthoFrac non-fracture femur films at 0.15;
    re-check this when the zone model has broader coverage, and keep the calibrated-probability
    display rather than a bare "detected" claim.
@@ -629,4 +712,11 @@ its scores are displayed as raw detector scores and must never be presented as p
    The repo is `PUBLIC` (`gh repo view --json visibility`), so these are not optional.
 6. **Finish A3.** The zone classifier names hip zones on detected fractures today; it does not yet
    feed implant selection or the surgical plan, and it has no shaft/distal classes. A2 is the
-   prerequisite for the latter.
+   prerequisite for the latter — **but A2's volume source changed**: MAISI needs ~58–60 GB VRAM at 512³
+   against Kaggle's 16 GB T4, so Phase 2 projects **real public CT to DRR on CPU** instead
+   (TotalSegmentator, CC-BY-4.0; its labels give whole `femur_left/right` + `hip_left/right` only, so
+   the five zones must be derived geometrically, not read off). See plan `distant-fjord-trout`.
+7. **Next action (token-free): the T1.2 gate-cost sweep.** `eval_onnx_test_split.py --split test`
+   already sweeps thresholds internally because it loads at conf 0.01. Pair it with the OrthoFrac
+   external-negative count and decide in writing whether gates 0.12/0.10 buy `1.jpg` (0.148, calibrated
+   0.500) at a price worth paying. `LOCAL_ONNX_CONF` does not move without that record.

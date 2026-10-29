@@ -64,10 +64,10 @@ AutoMedBench, agents + digital twins, Holoscan). Cross-referenced against `PROGR
 | # | Action | Source tech | Integrate? | Effort |
 | --- | --- | --- | --- | --- |
 | A1 | Region-aware v4 detector on Roboflow `proximal-femur-fracture` (756 imgs, boxes, CC BY 4.0) | Existing plan (§ nums in PROGRESS.md) | Replace geometric region labeling | Low |
-| A2 | Synthetic hip X-ray engine: MAISI/NV-Generate hip CT volumes + paired masks → DRR projection → fracture-line injection → YOLO augmentation for hip class | NV-Generate/MAISI (HF) | Augment training data only; real val/test untouched | Med-High |
+| A2 | Synthetic hip X-ray engine: ~~MAISI/NV-Generate hip CT volumes~~ **real public CT volumes (TotalSegmentator, CC-BY-4.0)** + derived masks → DRR projection on CPU → fracture-line injection → YOLO augmentation for hip class | Own pipeline; MAISI **dropped as a source** — needs ~58–60 GB VRAM at 512³ vs Kaggle's 16 GB T4 | Augment training data only; real val/test untouched | Med-High |
 | A3 | Learned region classes: `femoral_neck / intertrochanteric / subtrochanteric / shaft / distal` per ML_TRAINING_PLAN.md | Own plan | **Partial (2026-10-29):** zone model ships as a second classifier; shaft/distal still geometric — source has no such labels | Medium |
 | A4 | Two-reader confidence gate: local YOLO + open reasoning VLM second read; display agreement | NV-Reason-CT pattern; MedGemma/Merlin baselines | Add optional cloud mode; local ONNX stays primary | High |
-| A5 | SSL pretraining on unlabeled X-rays (SegResNetDS + cuboid masked-volume reconstruction) | NSW telestroke talk | Improves recipe | Medium |
+| A5 | ~~SSL pretraining on unlabeled X-rays (SegResNetDS + cuboid masked-volume reconstruction)~~ **DROPPED 2026-10-29** | NSW telestroke talk | SegResNetDS is a 3D-CT recipe; its encoder cannot initialise a 2D YOLO backbone. Reviving it means a separate 2D masked-pretraining project, not this item | — |
 | A6 | Grounded explanation UI: box overlay + calibrated probability + reader agreement | groundable-CoT principle | Modify SimView | Low |
 
 Expected: hip recall 0–50% → 60–75%; image F1 0.715 → ~0.80; displayed confidence becomes
@@ -103,7 +103,8 @@ Expected: hip recall 0–50% → 60–75%; image F1 0.715 → ~0.80; displayed c
 
 ```
 Phase 1 (wks 1–3):  A1 region v4 + A6 grounded UI + B3 physics-baked animation
-Phase 2 (wks 3–8):  A2 MAISI→DRR synthetic hips → v5 region training (A3) + A5 SSL
+Phase 2 (wks 3–8):  A2 real-CT→DRR synthetic hips → v5 region training (A3)   [A5 dropped]
+                    parallel track: detector decision threshold (PROGRESS.md §8e)
 Phase 3 (wks 8+):   B1 NV-Segment-CTMR CT path + B6 USDZ AR export
 Phase 4 (later):    A4 two-reader VLM, B4 stress maps, C3 agentic backend
 ```
@@ -111,7 +112,9 @@ Phase 4 (later):    A4 two-reader VLM, B4 stress maps, C3 agentic backend
 ## Dependencies / risks
 
 - **Roboflow API key** — Phase 1 blocker (already known; scripts + notebook are ready).
-- **One accessible GPU** for MAISI + physics (Kaggle T4 sufficed for v1–v3; Brev is the backup).
+- **One accessible GPU** for physics + any retrain (Kaggle T4 sufficed for v1–v3; Brev is the backup).
+  A2 no longer needs one for volume generation — DRR projection is CPU-only — but v5 training does,
+  and the Kaggle key is currently invalid server-side (`PROGRESS.md` §7).
 - **Licenses:** NV-Segment-CTMR is Non-Commercial — fine for the educational app, blocks
   commercialization. NV-Generate/MAISI license must be verified before training use.
 - **Synthetic data validation:** every synthetic-data step must be gated against the real
